@@ -1399,7 +1399,9 @@ export class SimulationEngine {
           const order = this.world.generateOrder(simTime);
           this.ordersGenerated++;
           this.dispatchQueue.push(order.id);
+          this.persistence.orders.saveOrder(order).catch(() => {});
         }
+        this.sortDispatchQueueByEDF();
         this.emitEvent('simulation', this.simulationId, 'demand.spike', {
           ordersInjected: count,
         });
