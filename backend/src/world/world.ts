@@ -8,6 +8,7 @@
 import {
   Vehicle,
   Order,
+  OrderPriority,
   Warehouse,
   Driver,
   Customer,
@@ -173,10 +174,29 @@ export class World {
       });
     }
 
+    // Priority and SLA Delivery Time Windows (VRPTW)
+    const priorityRoll = this.rng.next();
+    let priority: OrderPriority = 'standard';
+    let slaDurationMin = 120; // 2 hours standard
+
+    if (priorityRoll < 0.15) {
+      priority = 'urgent';
+      slaDurationMin = 15; // 15-minute express blitz
+    } else if (priorityRoll < 0.50) {
+      priority = 'express';
+      slaDurationMin = 35; // 35-minute express window
+    }
+
+    const slaDeadline = simTimestamp + slaDurationMin * 60 * 1000;
+
     const order: Order = {
       id: orderId,
       customerId,
       status: 'pending',
+      priority,
+      slaDeadline,
+      slaDurationMin,
+      slaStatus: 'on_time',
       items: [{ name: 'Package', quantity: 1 }],
       totalWeight_kg: this.rng.nextFloat(1, 50),
       pickupLocation: depot.position,
@@ -191,6 +211,21 @@ export class World {
 
     this.orders.set(orderId, order);
     return order;
+  }
+
+  /**
+   * Reset world state and re-initialize with a new scenario config.
+   */
+  public reset(config: ScenarioConfig): void {
+    this.config = config;
+    this.vehicles.clear();
+    this.orders.clear();
+    this.warehouses.clear();
+    this.drivers.clear();
+    this.customers.clear();
+    this.orderCounter = 0;
+    this.customerCounter = 0;
+    this.initializeFromConfig(config);
   }
 
   public addVehicle(vehicle: Vehicle): void {

@@ -1,7 +1,9 @@
-import type { Vehicle } from '../types';
+import type { Vehicle, Order } from '../types';
 
 interface VehiclePanelProps {
   vehicle: Vehicle;
+  orders?: Order[];
+  simTime?: number;
   onClose: () => void;
   onInjectEvent?: (event: { type: string; targetId?: string; payload?: Record<string, unknown> }) => void;
 }
@@ -14,7 +16,7 @@ const STATUS_COLORS: Record<string, string> = {
   broken_down: 'var(--color-red)',
 };
 
-export function VehiclePanel({ vehicle, onClose, onInjectEvent }: VehiclePanelProps) {
+export function VehiclePanel({ vehicle, orders = [], simTime = 0, onClose, onInjectEvent }: VehiclePanelProps) {
   return (
     <div className="vehicle-panel">
       <div className="panel-header">
@@ -145,18 +147,94 @@ export function VehiclePanel({ vehicle, onClose, onInjectEvent }: VehiclePanelPr
         )}
 
         <div className="detail-section">
-          <h3>Assignments</h3>
+          <h3>VRPTW Order Assignments</h3>
           <DetailRow label="Depot" value={vehicle.depotId} mono />
           <div className="detail-row" style={{ flexDirection: 'column' }}>
             <span className="detail-label" style={{ marginBottom: '0.5rem' }}>
               Orders ({vehicle.assignedOrderIds.length}):
             </span>
             {vehicle.assignedOrderIds.length > 0 ? (
-              <ul className="order-list mono-font">
-                {vehicle.assignedOrderIds.map((orderId) => (
-                  <li key={orderId}>{orderId}</li>
-                ))}
-              </ul>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {vehicle.assignedOrderIds.map((orderId) => {
+                  const order = orders.find((o) => o.id === orderId);
+                  const priority = order?.priority || 'standard';
+                  const slaStatus = order?.slaStatus || 'on_time';
+                  const remainingMs = order?.slaDeadline ? order.slaDeadline - simTime : null;
+                  const remainingMin = remainingMs !== null ? Math.round(remainingMs / 60000) : null;
+
+                  return (
+                    <div
+                      key={orderId}
+                      style={{
+                        padding: '0.5rem',
+                        background: 'rgba(255, 255, 255, 0.04)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.25rem',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span className="mono-font" style={{ fontWeight: 600 }}>{orderId}</span>
+                        <span
+                          style={{
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            padding: '0.1rem 0.4rem',
+                            borderRadius: '4px',
+                            background:
+                              priority === 'urgent'
+                                ? 'rgba(255, 23, 68, 0.2)'
+                                : priority === 'express'
+                                ? 'rgba(255, 145, 0, 0.2)'
+                                : 'rgba(41, 121, 255, 0.2)',
+                            color:
+                              priority === 'urgent'
+                                ? 'var(--color-red)'
+                                : priority === 'express'
+                                ? 'var(--color-orange)'
+                                : 'var(--color-blue)',
+                            border: `1px solid ${
+                              priority === 'urgent'
+                                ? 'rgba(255, 23, 68, 0.4)'
+                                : priority === 'express'
+                                ? 'rgba(255, 145, 0, 0.4)'
+                                : 'rgba(41, 121, 255, 0.4)'
+                            }`,
+                          }}
+                        >
+                          {priority.toUpperCase()} {order?.slaDurationMin ? `(${order.slaDurationMin}m)` : ''}
+                        </span>
+                      </div>
+
+                      {order?.slaDeadline && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                          <span style={{ color: 'var(--text-dim)' }}>SLA Deadline:</span>
+                          <span
+                            className="mono-font"
+                            style={{
+                              fontWeight: 600,
+                              color:
+                                slaStatus === 'breached'
+                                  ? 'var(--color-red)'
+                                  : slaStatus === 'at_risk'
+                                  ? 'var(--color-orange)'
+                                  : 'var(--color-green)',
+                            }}
+                          >
+                            {slaStatus === 'breached'
+                              ? `⚠️ BREACHED (${Math.abs(remainingMin || 0)}m late)`
+                              : slaStatus === 'at_risk'
+                              ? `⚡ AT RISK (${remainingMin}m left)`
+                              : `✓ ON TIME (${remainingMin}m left)`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
               <span className="detail-value" style={{ color: 'var(--text-dim)' }}>
                 None

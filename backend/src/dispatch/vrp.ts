@@ -60,11 +60,16 @@ export class VrpTourSolver {
 
     if (depotOrders.length === 0) return null;
 
-    // 2. Select a batch of orders that fit within the vehicle's capacity
+    // 2. Earliest Deadline First (EDF): prioritize orders with tighter SLA deadlines
+    const sortedDepotOrders = [...depotOrders].sort(
+      (a, b) => (a.slaDeadline || Infinity) - (b.slaDeadline || Infinity)
+    );
+
+    // Select a batch of orders that fit within the vehicle's capacity
     const selectedOrders: Order[] = [];
     let currentLoadKg = 0;
 
-    for (const order of depotOrders) {
+    for (const order of sortedDepotOrders) {
       if (selectedOrders.length >= maxStops) break;
       if (currentLoadKg + order.totalWeight_kg <= vehicle.capacity_kg) {
         selectedOrders.push(order);

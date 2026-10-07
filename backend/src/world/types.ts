@@ -30,6 +30,7 @@ export interface Vehicle {
   rerouteCount?: number;
   lastReroutedAt?: number;
   rerouteReason?: string;
+  trailHistory?: [number, number, number][]; // [lon, lat, timestamp]
 }
 
 export interface RouteLeg {
@@ -49,10 +50,17 @@ export interface Driver {
   shiftEnd: number;
 }
 
+export type OrderPriority = 'standard' | 'express' | 'urgent';
+export type SlaStatus = 'on_time' | 'at_risk' | 'breached';
+
 export interface Order {
   id: string;
   customerId: string;
   status: 'pending' | 'assigned' | 'picked_up' | 'in_transit' | 'delivered' | 'cancelled';
+  priority?: OrderPriority;
+  slaDeadline?: number;
+  slaDurationMin?: number;
+  slaStatus?: SlaStatus;
   items: any[];
   totalWeight_kg: number;
   pickupLocation: Coordinate;
@@ -101,6 +109,10 @@ export interface SimulationStats {
   lateOrders: number;
   avgDeliveryTimeMin: number;
   totalDistanceKm: number;
+  slaOnTimeDeliveries?: number;
+  slaBreachedDeliveries?: number;
+  slaComplianceRate?: number;
+  atRiskOrdersCount?: number;
 }
 
 export interface EcommerceBridgeStatus {
@@ -160,6 +172,7 @@ export interface SimulationState {
   trafficMultiplier?: number;
   benchmarkStats?: AlgorithmBenchmarkStats;
   incidents?: RoadIncident[];
+  activeScenarioId?: string;
 }
 
 export interface DepotConfig {
@@ -177,7 +190,9 @@ export interface IncidentConfig {
 }
 
 export interface ScenarioConfig {
+  id?: string;
   name: string;
+  description?: string;
   seed: number;
   city: string;
   bounds: { north: number, south: number, east: number, west: number };

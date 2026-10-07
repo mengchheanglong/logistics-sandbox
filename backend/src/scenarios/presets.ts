@@ -1,0 +1,79 @@
+/**
+ * @fileoverview Scenario presets for the logistics sandbox digital twin.
+ */
+
+import { ScenarioConfig } from '../world/types.js';
+
+export const SCENARIO_PRESETS: Record<string, ScenarioConfig> = {
+  morning_delivery: {
+    id: 'morning_delivery',
+    name: 'Phnom Penh Morning Delivery',
+    description: 'Standard baseline logistics operations across Phnom Penh commercial and residential sectors.',
+    seed: 42,
+    city: 'Phnom Penh, Cambodia',
+    bounds: { north: 11.60, south: 11.52, east: 104.96, west: 104.88 },
+    vehicleCount: 30,
+    orderCount: 200,
+    depots: [
+      { id: 'depot-a', name: 'Central Market Depot', position: { lat: 11.5680, lon: 104.9223 } },
+      { id: 'depot-b', name: 'Russian Market Depot', position: { lat: 11.5490, lon: 104.9280 } },
+    ],
+    duration_hours: 8,
+    trafficEnabled: false,
+    incidents: [],
+  },
+
+  depot_stress_test: {
+    id: 'depot_stress_test',
+    name: 'Depot Flooding & Evacuation Stress Test',
+    description: 'Monsoon flooding closes Russian Market Depot. Stationed fleet evacuates to Central Market under heavy citywide demand.',
+    seed: 99,
+    city: 'Phnom Penh, Cambodia',
+    bounds: { north: 11.60, south: 11.52, east: 104.96, west: 104.88 },
+    vehicleCount: 35,
+    orderCount: 250,
+    depots: [
+      { id: 'depot-a', name: 'Central Market Depot', position: { lat: 11.5680, lon: 104.9223 } },
+      { id: 'depot-b', name: 'Russian Market Depot (Flooded)', position: { lat: 11.5490, lon: 104.9280 } },
+    ],
+    duration_hours: 8,
+    trafficEnabled: true,
+    incidents: [
+      {
+        type: 'flooding',
+        description: 'Monivong Approach Inundation',
+        position: { lat: 11.535, lon: 104.932 },
+        radiusM: 550,
+        severity: 'critical',
+      },
+    ],
+  },
+
+  express_rush_hour: {
+    id: 'express_rush_hour',
+    name: 'Express Rush-Hour Blitz (VRPTW Priority)',
+    description: 'High-density urgent delivery surge (15-min and 30-min tight SLAs) testing earliest-deadline-first dispatch under evening traffic.',
+    seed: 101,
+    city: 'Phnom Penh, Cambodia',
+    bounds: { north: 11.60, south: 11.52, east: 104.96, west: 104.88 },
+    vehicleCount: 28,
+    orderCount: 180,
+    depots: [
+      { id: 'depot-a', name: 'Central Market Depot', position: { lat: 11.5680, lon: 104.9223 } },
+      { id: 'depot-b', name: 'Russian Market Depot', position: { lat: 11.5490, lon: 104.9280 } },
+    ],
+    duration_hours: 6,
+    trafficEnabled: true,
+    incidents: [
+      {
+        type: 'congestion',
+        description: 'Norodom Blvd Evening Gridlock',
+        position: { lat: 11.557, lon: 104.928 },
+        radiusM: 400,
+        severity: 'high',
+      },
+    ],
+  },
+};
+
+export const defaultScenario = SCENARIO_PRESETS.morning_delivery;

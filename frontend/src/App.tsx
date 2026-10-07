@@ -14,17 +14,21 @@ export default function App() {
   const {
     state,
     loading,
+    scenarios,
     updateState,
     startSimulation,
     stopSimulation,
     pauseSimulation,
     resumeSimulation,
     setSpeed,
+    loadScenario,
   } = useSimulation();
 
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [incidentModalOpen, setIncidentModalOpen] = useState<boolean>(false);
   const [benchmarkModalOpen, setBenchmarkModalOpen] = useState<boolean>(false);
+  const [showTrails, setShowTrails] = useState<boolean>(true);
+  const [showHeatmap, setShowHeatmap] = useState<boolean>(true);
 
   const handleStateUpdate = useCallback(
     (newState: SimulationState) => {
@@ -108,6 +112,10 @@ export default function App() {
         speed={state.speed}
         status={state.status}
         connected={connected}
+        activeScenarioId={state.activeScenarioId || 'morning_delivery'}
+        scenarios={scenarios}
+        showTrails={showTrails}
+        showHeatmap={showHeatmap}
         ecommerceBridge={state.ecommerceBridge}
         benchmarkStats={state.benchmarkStats}
         onSpeedChange={setSpeed}
@@ -115,6 +123,9 @@ export default function App() {
         onResume={resumeSimulation}
         onStart={startSimulation}
         onStop={stopSimulation}
+        onSelectScenario={loadScenario}
+        onToggleTrails={() => setShowTrails((prev) => !prev)}
+        onToggleHeatmap={() => setShowHeatmap((prev) => !prev)}
         onOpenIncidents={() => setIncidentModalOpen(true)}
         onOpenBenchmark={() => setBenchmarkModalOpen(true)}
       />
@@ -123,14 +134,20 @@ export default function App() {
         <MapView
           vehicles={vehicles}
           warehouses={warehouses}
+          orders={state.orders || []}
           incidents={state.incidents || []}
           selectedVehicleId={selectedVehicleId}
           onVehicleClick={setSelectedVehicleId}
+          simTime={state.simTime}
+          showTrails={showTrails}
+          showHeatmap={showHeatmap}
         />
 
         {selectedVehicle && (
           <VehiclePanel
             vehicle={selectedVehicle}
+            orders={state.orders || []}
+            simTime={state.simTime}
             onClose={() => setSelectedVehicleId(null)}
             onInjectEvent={handleInjectIncident}
           />

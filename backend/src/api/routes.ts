@@ -83,7 +83,21 @@ export function setupRoutes(engine: SimulationEngine): Router {
   });
 
   router.get('/scenarios', (req, res) => {
-    res.json([defaultScenario]);
+    res.json(engine.getScenarioPresets());
+  });
+
+  router.post('/scenarios/load', (req, res) => {
+    const { scenarioId } = req.body || {};
+    if (!scenarioId) {
+      res.status(400).json({ error: 'scenarioId is required' });
+      return;
+    }
+    const result = engine.loadScenario(scenarioId);
+    if (!result.success) {
+      res.status(404).json(result);
+    } else {
+      res.json(result);
+    }
   });
 
   router.get('/stats', (req, res) => {

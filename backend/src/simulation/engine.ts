@@ -21,7 +21,7 @@ import { Dispatcher, AssignmentResult } from '../dispatch/dispatcher.js';
 import { VrpTourSolver } from '../dispatch/vrp.js';
 import { RoutingClient } from '../routing/client.js';
 import { EcommerceClient, EcommerceOrder } from '../integrations/ecommerce.js';
-import { defaultScenario } from '../scenarios/default.js';
+import { SCENARIO_PRESETS, defaultScenario } from '../scenarios/presets.js';
 import {
   Coordinate,
   SimulationState,
@@ -32,6 +32,7 @@ import {
   DispatchStrategy,
   AlgorithmBenchmarkStats,
   RoadIncident,
+  ScenarioConfig,
 } from '../world/types.js';
 import {
   interpolateAlongPath,
@@ -57,6 +58,8 @@ export class SimulationEngine {
 
   /** Active road hazard incidents */
   private incidents: RoadIncident[] = [];
+  /** Currently active scenario preset identifier */
+  private activeScenarioId: string = 'morning_delivery';
 
   /** How many orders have been generated so far */
   private ordersGenerated: number = 0;
@@ -225,6 +228,10 @@ export class SimulationEngine {
       id: eOrder.order_id,
       customerId: eOrder.customer_id || 'C-ECOMMERCE',
       status: 'pending',
+      priority: 'express',
+      slaDurationMin: 35,
+      slaDeadline: this.clock.getSimulatedTime() + 35 * 60 * 1000,
+      slaStatus: 'on_time',
       items: eOrder.items || [{ name: 'Marketplace Item', quantity: 1 }],
       totalWeight_kg: totalWeight,
       pickupLocation: depot.position,
@@ -239,6 +246,7 @@ export class SimulationEngine {
 
     this.world.addOrder(order);
     this.dispatchQueue.push(order.id);
+    this.sortDispatchQueueByEDF();
     this.ecommerceClient.recordOrderIngested();
 
     this.emitEvent('order', order.id, 'order.created', {
@@ -247,10 +255,87 @@ export class SimulationEngine {
       totalAmount: eOrder.total,
       deliveryAddress: eOrder.delivery_address,
       itemsCount: (eOrder.items || []).length,
+      priority: order.priority,
+      slaDeadline: order.slaDeadline,
     });
 
-    console.log(`[SimulationEngine] Ingested marketplace order: ${order.id} for ${eOrder.customer_name}`);
+    console.log(`[SimulationEngine] Ingested marketplace order: ${order.id} for ${eOrder.customer_name} (Priority: ${order.priority})`);
     return order;
+  }
+
+  /**
+   * Return all available scenario presets.
+   */
+  public getScenarioPresets(): ScenarioConfig[] {
+    return Object.values(SCENARIO_PRESETS);
+  }
+
+  /**
+   * Reset world and load a scenario preset.
+   */
+  public loadScenario(scenarioId: string): { success: boolean; message: string; scenario: ScenarioConfig } {
+    const scenario = SCENARIO_PRESETS[scenarioId];
+    if (!scenario) {
+      return { success: false, message: `Scenario preset "${scenarioId}" not found.`, scenario: SCENARIO_PRESETS.morning_delivery };
+    }
+
+    this.stop();
+    this.world.reset(scenario);
+    this.activeScenarioId = scenario.id || scenarioId;
+    this.targetOrderCount = scenario.orderCount;
+    this.ordersGenerated = 0;
+    this.lastOrderGenTime = 0;
+    this.dispatchQueue = [];
+    this.incidents = [];
+    this.clock = new SimulationClock(0, 1);
+    this.benchmarkMetrics = {
+      totalQueries: 0,
+      totalQueryTimeMs: 0,
+      totalNodesVisited: 0,
+      totalOrdersAssigned: 0,
+    };
+
+    const durationMs = scenario.duration_hours * 60 * 60 * 1000;
+    this.orderGenerationIntervalMs = durationMs / this.targetOrderCount;
+
+    // Load initial scenario incidents if defined
+    if (scenario.incidents && scenario.incidents.length > 0) {
+      for (const inc of scenario.incidents) {
+        if (inc.position) {
+          this.createRoadIncident({
+            type: inc.type as any,
+            description: inc.description || 'Scenario Road Hazard',
+            position: inc.position,
+            radiusM: inc.radiusM || 500,
+            severity: inc.severity,
+            autoRerouteAffected: false,
+          });
+        }
+      }
+    }
+
+    this.emitEvent('simulation', this.simulationId, 'scenario.loaded', {
+      scenarioId: this.activeScenarioId,
+      name: scenario.name,
+      vehicles: scenario.vehicleCount,
+      orders: scenario.orderCount,
+    });
+
+    console.log(`[SimulationEngine] Scenario loaded: ${scenario.name} (${this.activeScenarioId})`);
+    return { success: true, message: `Loaded scenario "${scenario.name}".`, scenario };
+  }
+
+  /**
+   * Sort pending dispatch queue using Earliest Deadline First (EDF) priority.
+   */
+  private sortDispatchQueueByEDF(): void {
+    this.dispatchQueue.sort((idA, idB) => {
+      const orderA = this.world.getOrder(idA);
+      const orderB = this.world.getOrder(idB);
+      const deadlineA = orderA?.slaDeadline ?? Infinity;
+      const deadlineB = orderB?.slaDeadline ?? Infinity;
+      return deadlineA - deadlineB;
+    });
   }
 
   /**
@@ -283,12 +368,16 @@ export class SimulationEngine {
       this.ordersGenerated++;
       this.lastOrderGenTime = simTime;
       this.dispatchQueue.push(order.id);
+      this.sortDispatchQueueByEDF();
 
       this.emitEvent('order', order.id, 'order.created', {
         customerId: order.customerId,
         totalWeight_kg: order.totalWeight_kg,
         pickupLocation: order.pickupLocation,
         deliveryLocation: order.deliveryLocation,
+        priority: order.priority,
+        slaDeadline: order.slaDeadline,
+        slaDurationMin: order.slaDurationMin,
       });
     }
   }
@@ -450,6 +539,29 @@ export class SimulationEngine {
    * Update all vehicle positions by advancing them along their route geometry.
    */
   private updateVehicles(simTime: number, deltaRealMs: number): void {
+    // 1. SLA deadline monitoring across active orders
+    for (const order of this.world.getAllOrders()) {
+      if (order.status === 'delivered' || order.status === 'cancelled') continue;
+      if (order.slaDeadline) {
+        if (simTime > order.slaDeadline) {
+          if (order.slaStatus !== 'breached') {
+            order.slaStatus = 'breached';
+            this.emitEvent('order', order.id, 'order.sla.breached', {
+              orderId: order.id,
+              priority: order.priority,
+              deadline: order.slaDeadline,
+              simTime,
+            });
+          }
+        } else if (order.slaDeadline - simTime < 10 * 60 * 1000) {
+          order.slaStatus = 'at_risk';
+        } else {
+          order.slaStatus = 'on_time';
+        }
+      }
+    }
+
+    // 2. Advance vehicle positions
     for (const vehicle of this.world.getAllVehicles()) {
       if (vehicle.status === 'en_route' || vehicle.status === 'returning') {
         this.advanceVehicle(vehicle, deltaRealMs);
@@ -478,6 +590,17 @@ export class SimulationEngine {
     const newPosition = interpolateAlongPath(vehicle.routeGeometry, vehicle.routeProgress);
     vehicle.position = newPosition;
     vehicle.speed_kmh = (vehicle.routeDistanceM / vehicle.routeDurationS) * 3.6 * effectiveSpeedFactor;
+
+    // Record rolling trail history for animated light trails (TripsLayer)
+    if (!vehicle.trailHistory) vehicle.trailHistory = [];
+    const simTime = this.clock.getSimulatedTime();
+    const lastTrail = vehicle.trailHistory[vehicle.trailHistory.length - 1];
+    if (!lastTrail || simTime - lastTrail[2] >= 1500) {
+      vehicle.trailHistory.push([newPosition.lon, newPosition.lat, simTime]);
+      if (vehicle.trailHistory.length > 30) {
+        vehicle.trailHistory.shift();
+      }
+    }
 
     // Emit position update event & stream Cassandra ping to ecommerce-hive-nosql (throttled)
     if (Math.random() < 0.1) {
@@ -678,6 +801,25 @@ export class SimulationEngine {
       return sum;
     }, 0);
 
+    // Calculate SLA compliance metrics
+    const slaDelivered = deliveredOrders.filter((o) => !!o.slaDeadline);
+    const slaBreachedDeliveries = slaDelivered.filter(
+      (o) => (o.deliveredAt && o.slaDeadline && o.deliveredAt > o.slaDeadline) || o.slaStatus === 'breached'
+    ).length;
+    const slaOnTimeDeliveries = slaDelivered.length - slaBreachedDeliveries;
+    const slaComplianceRate = slaDelivered.length > 0
+      ? Math.round((slaOnTimeDeliveries / slaDelivered.length) * 1000) / 10
+      : 100;
+
+    const atRiskOrdersCount = orders.filter(
+      (o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.slaStatus === 'at_risk'
+    ).length;
+
+    const breachedActiveCount = orders.filter(
+      (o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.slaStatus === 'breached'
+    ).length;
+    const lateOrders = breachedActiveCount + slaBreachedDeliveries;
+
     return {
       simulationId: this.simulationId,
       simTime: this.clock.getSimulatedTime(),
@@ -694,14 +836,19 @@ export class SimulationEngine {
       trafficMultiplier: this.trafficMultiplier,
       benchmarkStats: this.getBenchmarkStats(),
       incidents: this.incidents.filter((i) => i.active),
+      activeScenarioId: this.activeScenarioId,
       stats: {
         activeVehicles: activeVehicles.length,
         totalOrders: orders.length,
         deliveredOrders: deliveredOrders.length,
         pendingOrders: pendingOrders.length,
-        lateOrders: 0,
+        lateOrders,
         avgDeliveryTimeMin: Math.round(avgDeliveryTimeMin * 10) / 10,
         totalDistanceKm: Math.round(totalDistanceKm * 10) / 10,
+        slaOnTimeDeliveries,
+        slaBreachedDeliveries,
+        slaComplianceRate,
+        atRiskOrdersCount,
       },
     };
   }

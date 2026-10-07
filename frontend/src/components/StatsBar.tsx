@@ -6,15 +6,45 @@ interface StatsBarProps {
 }
 
 export function StatsBar({ stats, ecommerceBridge }: StatsBarProps) {
+  const slaRate = stats.slaComplianceRate ?? 100;
+  const slaColor =
+    slaRate >= 95
+      ? 'text-ops-green'
+      : slaRate >= 80
+      ? 'text-amber-400'
+      : 'text-ops-red';
+
+  const atRiskCount = stats.atRiskOrdersCount ?? 0;
+  const breachedCount = stats.slaBreachedDeliveries ?? 0;
+
   return (
     <footer className="flex items-center justify-around px-6 py-2 bg-ops-panel border-t border-ops-border text-xs z-10 select-none">
       <StatItem label="Active Vehicles" value={stats.activeVehicles} />
       <StatItem label="Delivered" value={stats.deliveredOrders} colorClass="text-ops-green" />
       <StatItem label="Total Orders" value={stats.totalOrders} />
       <StatItem label="Pending" value={stats.pendingOrders} colorClass="text-ops-blue" />
-      <StatItem label="Late" value={stats.lateOrders} colorClass="text-ops-red" />
+      
+      {/* SLA VRPTW Compliance & Risk Metrics */}
+      <StatItem
+        label="SLA Compliance"
+        value={`${slaRate.toFixed(1)}%`}
+        colorClass={slaColor}
+      />
+      <StatItem
+        label="SLA At Risk"
+        value={atRiskCount}
+        colorClass={atRiskCount > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}
+      />
+      <StatItem
+        label="SLA Breached"
+        value={breachedCount}
+        colorClass={breachedCount > 0 ? 'text-ops-red font-bold' : 'text-slate-400'}
+      />
+
+      <StatItem label="Late" value={stats.lateOrders} colorClass={stats.lateOrders > 0 ? 'text-ops-red' : 'text-slate-300'} />
       <StatItem label="Avg Delivery" value={`${stats.avgDeliveryTimeMin.toFixed(1)} min`} />
       <StatItem label="Distance" value={`${stats.totalDistanceKm.toFixed(1)} km`} />
+      
       {ecommerceBridge && (
         <>
           <StatItem label="Marketplace Ingest" value={ecommerceBridge.ordersIngestedCount} colorClass="text-ops-cyan" />
@@ -41,4 +71,3 @@ function StatItem({
     </div>
   );
 }
-

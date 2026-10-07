@@ -53,14 +53,52 @@ export function useSimulation() {
     });
   };
 
+  const [scenarios, setScenarios] = useState<Array<{ id: string; name: string; description?: string }>>([]);
+
+  const fetchScenarios = async () => {
+    try {
+      const res = await fetch('/api/scenarios');
+      if (res.ok) {
+        const data = await res.json();
+        setScenarios(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch scenarios:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchScenarios();
+  }, []);
+
+  const loadScenario = async (scenarioId: string) => {
+    try {
+      const res = await fetch('/api/scenarios/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenarioId }),
+      });
+      if (res.ok) {
+        await fetchState();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to load scenario:', err);
+      return false;
+    }
+  };
+
   return {
     state,
     loading,
+    scenarios,
     updateState,
     startSimulation,
     stopSimulation,
     pauseSimulation,
     resumeSimulation,
     setSpeed,
+    loadScenario,
   };
 }
