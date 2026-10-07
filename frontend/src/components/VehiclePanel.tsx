@@ -58,25 +58,82 @@ export function VehiclePanel({ vehicle, onClose, onInjectEvent }: VehiclePanelPr
 
         {vehicle.routeGeometry.length > 1 && (
           <div className="detail-section">
-            <h3>Current Route</h3>
+            <h3>{vehicle.routeLegs && vehicle.routeLegs.length > 1 ? 'Multi-Stop Tour' : 'Current Route'}</h3>
+            {vehicle.routeLegs && vehicle.routeLegs.length > 1 && (
+              <>
+                <DetailRow
+                  label="Tour Progress"
+                  value={`Leg ${(vehicle.currentLegIndex ?? 0) + 1} of ${vehicle.totalLegsCount || vehicle.routeLegs.length}`}
+                  color="var(--accent-cyan)"
+                  mono
+                />
+                <DetailRow
+                  label="Current Leg Target"
+                  value={
+                    vehicle.routeLegs[vehicle.currentLegIndex ?? 0]?.orderId
+                      ? `Drop Order ${vehicle.routeLegs[vehicle.currentLegIndex ?? 0].orderId}`
+                      : `Return to Depot (${vehicle.depotId})`
+                  }
+                  color="var(--color-orange)"
+                />
+                <DetailRow
+                  label="Remaining Drops"
+                  value={`${vehicle.assignedOrderIds.length} order(s)`}
+                  mono
+                />
+              </>
+            )}
             <DetailRow
-              label="Distance"
+              label={vehicle.routeLegs && vehicle.routeLegs.length > 1 ? 'Leg Distance' : 'Distance'}
               value={`${(vehicle.routeDistanceM / 1000).toFixed(2)} km`}
               mono
             />
             <DetailRow
-              label="Duration"
+              label={vehicle.routeLegs && vehicle.routeLegs.length > 1 ? 'Leg Duration' : 'Duration'}
               value={`${(vehicle.routeDurationS / 60).toFixed(1)} min`}
               mono
             />
             <DetailRow
-              label="Progress"
+              label={vehicle.routeLegs && vehicle.routeLegs.length > 1 ? 'Leg Progress' : 'Progress'}
               value={`${(vehicle.routeProgress * 100).toFixed(1)}%`}
               mono
             />
             {vehicle.currentRouteId && (
               <DetailRow label="Route ID" value={vehicle.currentRouteId} mono />
             )}
+          </div>
+        )}
+
+        {vehicle.routeLegs && vehicle.routeLegs.length > 1 && (
+          <div className="detail-section">
+            <h3>Tour Itinerary ({vehicle.routeLegs.length} Legs)</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.8rem' }}>
+              {vehicle.routeLegs.map((leg, idx) => {
+                const isCurrent = idx === (vehicle.currentLegIndex ?? 0);
+                const isDone = idx < (vehicle.currentLegIndex ?? 0);
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '0.3rem 0.5rem',
+                      borderRadius: '4px',
+                      background: isCurrent ? 'rgba(0, 229, 255, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                      border: isCurrent ? '1px solid var(--accent-cyan)' : '1px solid transparent',
+                    }}
+                  >
+                    <span>
+                      {isDone ? '✅' : isCurrent ? '📍' : '⏳'} {leg.orderId ? `Drop: ${leg.orderId}` : `Depot: ${vehicle.depotId}`}
+                    </span>
+                    <span className="mono-font" style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>
+                      {(leg.distanceM / 1000).toFixed(1)}km
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 

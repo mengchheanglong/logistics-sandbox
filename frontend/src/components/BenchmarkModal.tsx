@@ -72,6 +72,12 @@ const DISPATCH_STRATEGIES: {
     badge: 'Sector Clustered',
     description: 'Prioritizes vehicles stationed at the depot closest to the customer address to eliminate cross-city deadheading.',
   },
+  {
+    id: 'multi_stop_tour',
+    name: 'Multi-Stop Tour (VRP Batching)',
+    badge: '📦 VRP Multi-Drop',
+    description: 'Batches 3-8 packages per vehicle and optimizes drop sequence using Nearest-Neighbor TSP heuristic with depot return.',
+  },
 ];
 
 export function BenchmarkModal({

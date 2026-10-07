@@ -18,6 +18,7 @@ import { SimulationClock } from './clock.js';
 import { World } from '../world/world.js';
 import { EventBus } from '../events/event-bus.js';
 import { Dispatcher, AssignmentResult } from '../dispatch/dispatcher.js';
+import { VrpTourSolver } from '../dispatch/vrp.js';
 import { RoutingClient } from '../routing/client.js';
 import { EcommerceClient, EcommerceOrder } from '../integrations/ecommerce.js';
 import { defaultScenario } from '../scenarios/default.js';
@@ -38,6 +39,7 @@ export class SimulationEngine {
   public world: World;
   public eventBus: EventBus;
   public dispatcher: Dispatcher;
+  public vrpSolver: VrpTourSolver;
   public routingClient: RoutingClient;
   public ecommerceClient: EcommerceClient;
 
@@ -83,6 +85,7 @@ export class SimulationEngine {
     this.eventBus = new EventBus();
     this.world = new World(defaultScenario);
     this.dispatcher = new Dispatcher();
+    this.vrpSolver = new VrpTourSolver();
     this.routingClient = new RoutingClient();
     this.ecommerceClient = new EcommerceClient();
 
@@ -286,17 +289,91 @@ export class SimulationEngine {
   private dispatchPendingOrders(): void {
     if (this.dispatching || this.dispatchQueue.length === 0) return;
 
-    const orderId = this.dispatchQueue[0];
-    const order = this.world.getOrder(orderId);
-    if (!order || order.status !== 'pending') {
-      this.dispatchQueue.shift();
-      return;
-    }
-
     const idleVehicles = this.world.getIdleVehicles();
     if (idleVehicles.length === 0) return;
 
     this.dispatching = true;
+
+    // Check if multi-stop tour strategy is selected
+    if (this.activeDispatchStrategy === 'multi_stop_tour') {
+      const vehicle = idleVehicles[0];
+      const pendingOrders = this.dispatchQueue
+        .map((id) => this.world.getOrder(id))
+        .filter((o): o is Order => !!o && o.status === 'pending');
+
+      const depot = this.world.getAllWarehouses().find((w) => w.id === vehicle.depotId) || {
+        position: vehicle.position,
+      };
+
+      this.vrpSolver
+        .planTour(
+          vehicle,
+          pendingOrders,
+          depot.position,
+          this.routingClient,
+          this.activeRoutingAlgorithm
+        )
+        .then((tour) => {
+          if (tour && tour.legs.length > 0) {
+            // Apply multi-stop tour state to vehicle
+            vehicle.status = 'en_route';
+            vehicle.routeLegs = tour.legs;
+            vehicle.currentLegIndex = 0;
+            vehicle.totalLegsCount = tour.legs.length;
+            vehicle.assignedOrderIds = tour.orderIds;
+            vehicle.currentLoad_kg = tour.totalLoadKg;
+
+            const firstLeg = tour.legs[0];
+            vehicle.routeGeometry = firstLeg.path;
+            vehicle.routeDistanceM = firstLeg.distanceM;
+            vehicle.routeDurationS = firstLeg.durationS;
+            vehicle.routeProgress = 0;
+            vehicle.currentRouteId = `TOUR-${vehicle.id}-${tour.legs.length}LEGS`;
+
+            // Mark all tour orders as assigned
+            for (const orderId of tour.orderIds) {
+              const order = this.world.getOrder(orderId);
+              if (order) {
+                order.status = 'assigned';
+                order.assignedVehicleId = vehicle.id;
+                order.assignedAt = this.clock.getSimulatedTime();
+                this.ecommerceClient.updateOrderStatus(order.id, 'Out for Delivery', vehicle.driverId);
+              }
+              // Remove from queue
+              const qIndex = this.dispatchQueue.indexOf(orderId);
+              if (qIndex !== -1) this.dispatchQueue.splice(qIndex, 1);
+            }
+
+            // Benchmark metrics
+            this.benchmarkMetrics.totalQueries += tour.totalQueries;
+            this.benchmarkMetrics.totalQueryTimeMs += tour.totalQueryTimeMs;
+            this.benchmarkMetrics.totalNodesVisited += tour.totalNodesVisited;
+            this.benchmarkMetrics.totalOrdersAssigned += tour.orderIds.length;
+
+            this.emitEvent('vehicle', vehicle.id, 'vehicle.tour.dispatched', {
+              orderCount: tour.orderIds.length,
+              totalLegs: tour.legs.length,
+              totalDistanceM: tour.totalDistanceM,
+              totalDurationS: tour.totalDurationS,
+            });
+          }
+          this.dispatching = false;
+        })
+        .catch((err) => {
+          console.error('[SimulationEngine] VRP dispatch error:', err);
+          this.dispatching = false;
+        });
+      return;
+    }
+
+    // Standard single-order dispatch
+    const orderId = this.dispatchQueue[0];
+    const order = this.world.getOrder(orderId);
+    if (!order || order.status !== 'pending') {
+      this.dispatchQueue.shift();
+      this.dispatching = false;
+      return;
+    }
 
     this.dispatcher
       .assignOrder(order, idleVehicles, this.routingClient, {
@@ -412,11 +489,63 @@ export class SimulationEngine {
   }
 
   /**
-   * Handle vehicle arriving at its destination.
+   * Handle vehicle arriving at its destination (single drop or tour leg).
    */
   private completeVehicleRoute(vehicle: Vehicle): void {
     const simTime = this.clock.getSimulatedTime();
 
+    // 1. Multi-stop tour progressive execution
+    if (vehicle.routeLegs && vehicle.routeLegs.length > 0) {
+      const legIndex = vehicle.currentLegIndex ?? 0;
+      const leg = vehicle.routeLegs[legIndex];
+
+      // If this leg delivered an order, complete that order
+      if (leg && leg.orderId) {
+        const order = this.world.getOrder(leg.orderId);
+        if (order) {
+          order.status = 'delivered';
+          order.deliveredAt = simTime;
+          vehicle.currentLoad_kg = Math.max(0, vehicle.currentLoad_kg - order.totalWeight_kg);
+          this.ecommerceClient.updateOrderStatus(order.id, 'Delivered', vehicle.driverId);
+
+          this.emitEvent('order', order.id, 'order.delivered', {
+            vehicleId: vehicle.id,
+            deliveredAt: simTime,
+            legIndex: legIndex + 1,
+            totalLegs: vehicle.routeLegs.length,
+          });
+        }
+        vehicle.assignedOrderIds = vehicle.assignedOrderIds.filter((id) => id !== leg.orderId);
+      }
+
+      // Check if there are more legs in this tour
+      const nextIndex = legIndex + 1;
+      if (nextIndex < vehicle.routeLegs.length) {
+        vehicle.currentLegIndex = nextIndex;
+        const nextLeg = vehicle.routeLegs[nextIndex];
+        vehicle.routeGeometry = nextLeg.path;
+        vehicle.routeDistanceM = nextLeg.distanceM;
+        vehicle.routeDurationS = nextLeg.durationS;
+        vehicle.routeProgress = 0;
+        vehicle.status = nextLeg.orderId ? 'en_route' : 'returning';
+
+        this.emitEvent('vehicle', vehicle.id, 'vehicle.leg.advanced', {
+          currentLegIndex: nextIndex + 1,
+          totalLegs: vehicle.routeLegs.length,
+          isReturnLeg: !nextLeg.orderId,
+        });
+        return;
+      } else {
+        // Multi-stop tour fully finished and returned to depot
+        this.resetVehicleToIdle(vehicle);
+        this.emitEvent('vehicle', vehicle.id, 'vehicle.tour.completed', {
+          depotId: vehicle.depotId,
+        });
+        return;
+      }
+    }
+
+    // 2. Standard single-order delivery handling
     if (vehicle.status === 'en_route') {
       for (const orderId of vehicle.assignedOrderIds) {
         const order = this.world.getOrder(orderId);
@@ -484,6 +613,9 @@ export class SimulationEngine {
     vehicle.assignedOrderIds = [];
     vehicle.currentLoad_kg = 0;
     vehicle.speed_kmh = 0;
+    vehicle.routeLegs = [];
+    vehicle.currentLegIndex = 0;
+    vehicle.totalLegsCount = 0;
   }
 
   private emitEvent(

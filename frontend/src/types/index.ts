@@ -28,6 +28,17 @@ export interface Vehicle {
   routeDistanceM: number;
   routeDurationS: number;
   depotId: string;
+  routeLegs?: RouteLeg[];
+  currentLegIndex?: number;
+  totalLegsCount?: number;
+}
+
+export interface RouteLeg {
+  orderId?: string;
+  destination: Coordinate;
+  path: [number, number][]; // [lon, lat]
+  distanceM: number;
+  durationS: number;
 }
 
 export interface Order {
@@ -82,7 +93,8 @@ export type RoutingAlgorithm =
 export type DispatchStrategy =
   | 'nearest_available'
   | 'route_aware'
-  | 'cluster_zone';
+  | 'cluster_zone'
+  | 'multi_stop_tour';
 
 export interface AlgorithmBenchmarkStats {
   routingAlgorithm: RoutingAlgorithm;
