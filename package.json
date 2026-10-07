@@ -1,0 +1,31 @@
+{
+  "name": "logistics-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Visual digital-twin sandbox for logistics systems",
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "lint": "pnpm -r run lint",
+    "backend": "pnpm --filter @logistics-sandbox/backend dev",
+    "frontend": "pnpm --filter @logistics-sandbox/frontend dev"
+  },
+  "keywords": [
+    "logistics",
+    "simulation",
+    "digital-twin",
+    "routing",
+    "dispatch",
+    "fleet-management",
+    "maplibre",
+    "deck.gl",
+    "osm"
+  ],
+  "author": "mengchheanglong",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}

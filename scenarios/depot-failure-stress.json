@@ -1,0 +1,88 @@
+{
+  "name": "Depot Failure Stress Test",
+  "description": "Stress test scenario: close a depot mid-simulation, spike traffic, inject urgent orders",
+  "seed": 12882,
+  "city": "Phnom Penh",
+  "country": "Cambodia",
+  "bounds": {
+    "north": 11.62,
+    "south": 11.50,
+    "east": 104.98,
+    "west": 104.86
+  },
+  "center": {
+    "lat": 11.5564,
+    "lon": 104.9282
+  },
+  "vehicleCount": 100,
+  "orderCount": 2000,
+  "durationHours": 12,
+  "startHour": 6,
+  "depots": [
+    {
+      "id": "DEP-A",
+      "name": "Central Market Depot",
+      "position": { "lat": 11.5680, "lon": 104.9223 },
+      "vehicleCapacity": 40,
+      "type": "depot"
+    },
+    {
+      "id": "DEP-B",
+      "name": "Russian Market Depot",
+      "position": { "lat": 11.5490, "lon": 104.9280 },
+      "vehicleCapacity": 30,
+      "type": "depot"
+    },
+    {
+      "id": "DEP-C",
+      "name": "Riverside Depot",
+      "position": { "lat": 11.5750, "lon": 104.9320 },
+      "vehicleCapacity": 30,
+      "type": "depot"
+    }
+  ],
+  "vehicleTypes": [
+    { "type": "truck", "count": 30, "capacity_kg": 800, "speed_factor": 0.9 },
+    { "type": "van", "count": 40, "capacity_kg": 400, "speed_factor": 1.0 },
+    { "type": "motorcycle", "count": 30, "capacity_kg": 50, "speed_factor": 1.2 }
+  ],
+  "traffic": {
+    "enabled": true,
+    "morningPeak": { "start": "07:30", "end": "09:00", "multiplier": 3.0 },
+    "eveningPeak": { "start": "17:00", "end": "19:00", "multiplier": 2.5 }
+  },
+  "orderGeneration": {
+    "strategy": "burst",
+    "minWeight_kg": 1,
+    "maxWeight_kg": 80,
+    "deliveryRadiusKm": 8
+  },
+  "incidents": [
+    {
+      "type": "depot_closure",
+      "targetId": "DEP-B",
+      "simTime": "10:30",
+      "description": "Depot B closes due to flooding"
+    },
+    {
+      "type": "traffic_multiplier",
+      "factor": 2.0,
+      "simTime": "11:00",
+      "description": "City-wide traffic congestion"
+    },
+    {
+      "type": "demand_spike",
+      "orderCount": 500,
+      "urgent": true,
+      "simTime": "12:00",
+      "description": "500 urgent orders injected"
+    }
+  ],
+  "routing": {
+    "algorithm": "contraction_hierarchies",
+    "metric": "time"
+  },
+  "dispatch": {
+    "strategy": "nearest_available"
+  }
+}

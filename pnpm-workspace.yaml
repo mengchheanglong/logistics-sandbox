@@ -1,0 +1,7 @@
+# Logistics Sandbox
+
+## Root workspace configuration
+
+packages:
+  - backend
+  - frontend

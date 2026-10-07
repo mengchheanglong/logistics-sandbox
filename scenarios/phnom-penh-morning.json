@@ -1,0 +1,61 @@
+{
+  "name": "Phnom Penh Morning Delivery",
+  "description": "Standard morning delivery scenario in central Phnom Penh with moderate traffic and 2 depots",
+  "seed": 42,
+  "city": "Phnom Penh",
+  "country": "Cambodia",
+  "bounds": {
+    "north": 11.60,
+    "south": 11.52,
+    "east": 104.96,
+    "west": 104.88
+  },
+  "center": {
+    "lat": 11.5564,
+    "lon": 104.9282
+  },
+  "vehicleCount": 30,
+  "orderCount": 200,
+  "durationHours": 8,
+  "startHour": 6,
+  "depots": [
+    {
+      "id": "DEP-A",
+      "name": "Central Market Depot",
+      "position": { "lat": 11.5680, "lon": 104.9223 },
+      "vehicleCapacity": 20,
+      "type": "depot"
+    },
+    {
+      "id": "DEP-B",
+      "name": "Russian Market Depot",
+      "position": { "lat": 11.5490, "lon": 104.9280 },
+      "vehicleCapacity": 15,
+      "type": "depot"
+    }
+  ],
+  "vehicleTypes": [
+    { "type": "truck", "count": 10, "capacity_kg": 800, "speed_factor": 0.9 },
+    { "type": "van", "count": 12, "capacity_kg": 400, "speed_factor": 1.0 },
+    { "type": "motorcycle", "count": 8, "capacity_kg": 50, "speed_factor": 1.2 }
+  ],
+  "traffic": {
+    "enabled": false,
+    "morningPeak": { "start": "07:30", "end": "09:00", "multiplier": 2.0 },
+    "eveningPeak": { "start": "17:00", "end": "19:00", "multiplier": 1.8 }
+  },
+  "orderGeneration": {
+    "strategy": "uniform",
+    "minWeight_kg": 1,
+    "maxWeight_kg": 50,
+    "deliveryRadiusKm": 5
+  },
+  "incidents": [],
+  "routing": {
+    "algorithm": "contraction_hierarchies",
+    "metric": "time"
+  },
+  "dispatch": {
+    "strategy": "nearest_available"
+  }
+}
