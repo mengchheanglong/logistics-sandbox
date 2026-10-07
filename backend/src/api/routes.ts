@@ -92,7 +92,7 @@ export function setupRoutes(engine: SimulationEngine): Router {
       res.status(400).json({ error: 'scenarioId is required' });
       return;
     }
-    const result = engine.loadScenario(scenarioId);
+    const result = engine.loadScenario(scenarioId, { seedOrders: true });
     if (!result.success) {
       res.status(404).json(result);
     } else {

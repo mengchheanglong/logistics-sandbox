@@ -72,9 +72,10 @@ export class EcommerceClient {
         signal: AbortSignal.timeout(3000),
       });
       if (!res.ok) return [];
-      const orders = (await res.json()) as EcommerceOrder[];
-      return orders.filter(
-        (o) => o.status === 'Pending' || o.status === 'Preparing'
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : Array.isArray((data as any)?.orders) ? (data as any).orders : Array.isArray((data as any)?.data) ? (data as any).data : [];
+      return list.filter(
+        (o: any) => o && (o.status === 'Pending' || o.status === 'Preparing')
       );
     } catch (err) {
       console.warn(`[EcommerceClient] Failed to fetch orders: ${(err as Error).message}`);

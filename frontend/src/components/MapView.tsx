@@ -2,7 +2,6 @@ import { useMemo, useState, useCallback } from 'react';
 import Map from 'react-map-gl/maplibre';
 import { DeckGL } from '@deck.gl/react';
 import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
-import { TripsLayer } from '@deck.gl/geo-layers';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
 import type { Vehicle, Warehouse, RoadIncident, Order } from '../types';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -166,40 +165,108 @@ export function MapView({
       },
     });
 
-    // 2. Animated Light Trails (TripsLayer)
-    const tripsLayer = new TripsLayer({
-      id: 'vehicle-trips-layer',
-      data: vehicles.filter((v) => v.trailHistory && v.trailHistory.length > 1),
-      getPath: (d: Vehicle) => (d.trailHistory || []).map((p) => [p[0], p[1]]) as any,
-      getTimestamps: (d: Vehicle) => (d.trailHistory || []).map((p) => p[2] / 1000),
+    // 2a. Vehicle Trail Glow Halo (Neon cyan / amber glow trailing moving vehicles)
+    const trailGlowLayer = new PathLayer({
+      id: 'vehicle-trail-glow-layer',
+      data: vehicles.filter(
+        (v) =>
+          (v.status === 'en_route' || v.status === 'delivering' || v.status === 'returning') &&
+          v.trailHistory &&
+          v.trailHistory.length > 0
+      ),
+      pickable: false,
+      widthScale: 1,
+      widthMinPixels: 6,
+      widthMaxPixels: 14,
+      capRounded: true,
+      jointRounded: true,
+      getPath: (d: Vehicle) => {
+        const pts = (d.trailHistory || []).map((p) => [p[0], p[1]] as [number, number]);
+        const curr: [number, number] = [d.position.lon, d.position.lat];
+        const last = pts[pts.length - 1];
+        if (!last || Math.abs(last[0] - curr[0]) > 0.00001 || Math.abs(last[1] - curr[1]) > 0.00001) {
+          pts.push(curr);
+        }
+        if (pts.length === 1) {
+          pts.push([pts[0][0] + 0.00005, pts[0][1] + 0.00005]);
+        }
+        return pts;
+      },
       getColor: (d: Vehicle) =>
-        d.status === 'en_route'
-          ? [0, 229, 255]
-          : d.status === 'delivering'
-          ? [255, 145, 0]
-          : [100, 181, 246],
-      opacity: 0.9,
-      widthMinPixels: 3.5,
-      trailLength: 90,
-      currentTime: simTime / 1000,
+        d.status === 'delivering'
+          ? [255, 145, 0, 140]
+          : d.status === 'returning'
+          ? [59, 130, 246, 120]
+          : [0, 229, 255, 150],
+      getWidth: 8,
       visible: showTrails,
       updateTriggers: {
-        currentTime: [simTime],
-        getPath: [vehicles.map((v) => v.trailHistory?.length || 0).join(',')],
+        getPath: [vehicles.map((v) => `${v.id}:${v.trailHistory?.length || 0}:${v.position.lat.toFixed(4)}`).join(',')],
+        getColor: [vehicles.map((v) => v.status).join(',')],
+        visible: [showTrails],
       },
     });
 
-    // 3. Route paths for vehicles
+    // 2b. Vehicle Trail Core (Electric white/cyan focused beam inside glow)
+    const trailCoreLayer = new PathLayer({
+      id: 'vehicle-trail-core-layer',
+      data: vehicles.filter(
+        (v) =>
+          (v.status === 'en_route' || v.status === 'delivering' || v.status === 'returning') &&
+          v.trailHistory &&
+          v.trailHistory.length > 0
+      ),
+      pickable: false,
+      widthScale: 1,
+      widthMinPixels: 2.5,
+      widthMaxPixels: 6,
+      capRounded: true,
+      jointRounded: true,
+      getPath: (d: Vehicle) => {
+        const pts = (d.trailHistory || []).map((p) => [p[0], p[1]] as [number, number]);
+        const curr: [number, number] = [d.position.lon, d.position.lat];
+        const last = pts[pts.length - 1];
+        if (!last || Math.abs(last[0] - curr[0]) > 0.00001 || Math.abs(last[1] - curr[1]) > 0.00001) {
+          pts.push(curr);
+        }
+        if (pts.length === 1) {
+          pts.push([pts[0][0] + 0.00005, pts[0][1] + 0.00005]);
+        }
+        return pts;
+      },
+      getColor: (d: Vehicle) =>
+        d.status === 'delivering'
+          ? [255, 235, 180, 255]
+          : d.status === 'returning'
+          ? [210, 235, 255, 255]
+          : [230, 255, 255, 255],
+      getWidth: 3,
+      visible: showTrails,
+      updateTriggers: {
+        getPath: [vehicles.map((v) => `${v.id}:${v.trailHistory?.length || 0}:${v.position.lat.toFixed(4)}`).join(',')],
+        getColor: [vehicles.map((v) => v.status).join(',')],
+        visible: [showTrails],
+      },
+    });
+
+    // 3. Planned Route paths for vehicles (subtle ambient paths, highlighted for selected vehicle)
     const routeLayer = new PathLayer({
       id: 'routes-layer',
       data: vehicles.filter((v) => v.routeGeometry && v.routeGeometry.length > 1),
       pickable: false,
       widthScale: 1,
-      widthMinPixels: 2,
-      widthMaxPixels: 5,
+      widthMinPixels: 1.5,
+      widthMaxPixels: 6,
       getPath: (d: Vehicle) => d.routeGeometry,
-      getColor: (d: Vehicle) => (d.id === selectedVehicleId ? [0, 200, 255, 220] : [41, 121, 255, 110]),
-      getWidth: (d: Vehicle) => (d.id === selectedVehicleId ? 4 : 2),
+      getColor: (d: Vehicle) =>
+        d.id === selectedVehicleId
+          ? [0, 229, 255, 230]
+          : [41, 121, 255, 30],
+      getWidth: (d: Vehicle) => (d.id === selectedVehicleId ? 3.5 : 1.5),
+      updateTriggers: {
+        getColor: [selectedVehicleId],
+        getWidth: [selectedVehicleId],
+      },
     });
 
     // 4. Road Incident Hazard Zones
@@ -301,9 +368,10 @@ export function MapView({
 
     return [
       heatmapLayer,
-      tripsLayer,
-      incidentLayer,
       routeLayer,
+      trailGlowLayer,
+      trailCoreLayer,
+      incidentLayer,
       orderLayer,
       warehouseLayer,
       vehicleLayer,

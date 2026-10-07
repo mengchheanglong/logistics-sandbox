@@ -110,12 +110,29 @@ export class SimulationEngine {
     const durationMs = defaultScenario.duration_hours * 60 * 60 * 1000;
     this.orderGenerationIntervalMs = durationMs / this.targetOrderCount;
 
+    // Seed initial orders so vehicles immediately start active delivery on launch
+    this.seedInitialOrders(20);
+
     console.log(
       `[SimulationEngine] Created simulation ${this.simulationId}`,
       `| ${defaultScenario.vehicleCount} vehicles`,
       `| ${defaultScenario.orderCount} target orders`,
       `| ${defaultScenario.duration_hours}h duration`
     );
+  }
+
+  /**
+   * Pre-seed initial orders into the dispatch queue.
+   */
+  public seedInitialOrders(count: number = 20): void {
+    const simTime = this.clock.getSimulatedTime();
+    const toGen = Math.min(count, Math.max(1, this.targetOrderCount - this.ordersGenerated));
+    for (let i = 0; i < toGen; i++) {
+      const order = this.world.generateOrder(simTime);
+      this.ordersGenerated++;
+      this.dispatchQueue.push(order.id);
+    }
+    this.sortDispatchQueueByEDF();
   }
 
   /**
@@ -141,6 +158,11 @@ export class SimulationEngine {
         console.log('[SimulationEngine] Upstream ecommerce-hive-nosql marketplace standby (not reachable on port 4000)');
       }
     });
+
+    // Ensure orders are seeded when starting
+    if (this.world.getAllOrders().length === 0) {
+      this.seedInitialOrders(20);
+    }
 
     this.lastTickTime = Date.now();
     this.intervalId = setInterval(() => this.tick(), this.TICK_RATE_MS);
@@ -276,7 +298,10 @@ export class SimulationEngine {
   /**
    * Reset world and load a scenario preset.
    */
-  public loadScenario(scenarioId: string): { success: boolean; message: string; scenario: ScenarioConfig } {
+  public loadScenario(
+    scenarioId: string,
+    options: { seedOrders?: boolean } = {}
+  ): { success: boolean; message: string; scenario: ScenarioConfig } {
     const scenario = SCENARIO_PRESETS[scenarioId];
     if (!scenario) {
       return { success: false, message: `Scenario preset "${scenarioId}" not found.`, scenario: SCENARIO_PRESETS.morning_delivery };
@@ -301,6 +326,11 @@ export class SimulationEngine {
 
     const durationMs = scenario.duration_hours * 60 * 60 * 1000;
     this.orderGenerationIntervalMs = durationMs / this.targetOrderCount;
+
+    // Seed initial orders if requested (e.g. from UI)
+    if (options.seedOrders) {
+      this.seedInitialOrders(20);
+    }
 
     // Load initial scenario incidents if defined
     if (scenario.incidents && scenario.incidents.length > 0) {
@@ -432,6 +462,7 @@ export class SimulationEngine {
             vehicle.routeDurationS = firstLeg.durationS;
             vehicle.routeProgress = 0;
             vehicle.currentRouteId = `TOUR-${vehicle.id}-${tour.legs.length}LEGS`;
+            vehicle.trailHistory = [[vehicle.position.lon, vehicle.position.lat, this.clock.getSimulatedTime()]];
 
             // Mark all tour orders as assigned
             for (const orderId of tour.orderIds) {
@@ -502,6 +533,7 @@ export class SimulationEngine {
             vehicle.routeDurationS = result.route.durationS;
             vehicle.currentRouteId = `R-${order.id}`;
             vehicle.currentLoad_kg = order.totalWeight_kg;
+            vehicle.trailHistory = [[vehicle.position.lon, vehicle.position.lat, this.clock.getSimulatedTime()]];
 
             // Update order state
             order.status = 'assigned';
@@ -595,13 +627,17 @@ export class SimulationEngine {
     vehicle.position = newPosition;
     vehicle.speed_kmh = (vehicle.routeDistanceM / vehicle.routeDurationS) * 3.6 * effectiveSpeedFactor;
 
-    // Record rolling trail history for animated light trails (TripsLayer)
+    // Record rolling trail history for animated light trails
     if (!vehicle.trailHistory) vehicle.trailHistory = [];
     const simTime = this.clock.getSimulatedTime();
     const lastTrail = vehicle.trailHistory[vehicle.trailHistory.length - 1];
-    if (!lastTrail || simTime - lastTrail[2] >= 1500) {
+    if (
+      !lastTrail ||
+      haversineDistance(newPosition, { lat: lastTrail[1], lon: lastTrail[0] }) >= 15 ||
+      simTime - lastTrail[2] >= 1000
+    ) {
       vehicle.trailHistory.push([newPosition.lon, newPosition.lat, simTime]);
-      if (vehicle.trailHistory.length > 30) {
+      if (vehicle.trailHistory.length > 35) {
         vehicle.trailHistory.shift();
       }
     }
@@ -726,6 +762,7 @@ export class SimulationEngine {
             vehicle.assignedOrderIds = [];
             vehicle.currentLoad_kg = 0;
             vehicle.currentRouteId = `RET-${vehicle.id}`;
+            vehicle.trailHistory = [[vehicle.position.lon, vehicle.position.lat, this.clock.getSimulatedTime()]];
           })
           .catch(() => {
             this.resetVehicleToIdle(vehicle);
@@ -757,6 +794,7 @@ export class SimulationEngine {
     vehicle.routeLegs = [];
     vehicle.currentLegIndex = 0;
     vehicle.totalLegsCount = 0;
+    vehicle.trailHistory = [];
   }
 
   private emitEvent(
