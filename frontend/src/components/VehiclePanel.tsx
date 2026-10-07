@@ -8,296 +8,241 @@ interface VehiclePanelProps {
   onInjectEvent?: (event: { type: string; targetId?: string; payload?: Record<string, unknown> }) => void;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  idle: 'var(--color-green)',
-  en_route: 'var(--color-blue)',
-  delivering: 'var(--color-orange)',
-  returning: 'var(--color-blue)',
-  broken_down: 'var(--color-red)',
-};
-
 export function VehiclePanel({ vehicle, orders = [], simTime = 0, onClose, onInjectEvent }: VehiclePanelProps) {
+  const loadPercent = Math.min(100, Math.round((vehicle.currentLoad_kg / (vehicle.capacity_kg || 1)) * 100));
+  const progressPercent = Math.min(100, Math.round(vehicle.routeProgress * 100));
+
+  const statusStyle =
+    vehicle.status === 'en_route'
+      ? 'bg-cyan-950/70 text-cyan-300 border-cyan-500/40'
+      : vehicle.status === 'delivering'
+      ? 'bg-orange-950/70 text-orange-300 border-orange-500/40'
+      : vehicle.status === 'idle'
+      ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/40'
+      : vehicle.status === 'returning'
+      ? 'bg-sky-950/70 text-sky-300 border-sky-500/40'
+      : 'bg-rose-950/70 text-rose-300 border-rose-500/40';
+
   return (
-    <div className="vehicle-panel">
-      <div className="panel-header">
-        <h2>{vehicle.name}</h2>
-        <button className="close-btn" onClick={onClose}>
+    <aside className="w-84 bg-slate-950/95 backdrop-blur-md border-l border-slate-800 text-xs shadow-2xl flex flex-col z-20 select-none animate-in slide-in-from-right-4 duration-200">
+      {/* Header */}
+      <div className="p-3.5 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🚚</span>
+          <div>
+            <h2 className="font-bold text-sm text-slate-100 font-mono tracking-wide">{vehicle.name}</h2>
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider">{vehicle.type} • Depot: {vehicle.depotId}</span>
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="w-7 h-7 flex items-center justify-center rounded-md bg-slate-900 border border-slate-700/60 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer text-base"
+        >
           ×
         </button>
       </div>
 
-      <div className="panel-content">
-        <div className="detail-section">
-          <h3>Overview</h3>
-          <DetailRow label="ID" value={vehicle.id} mono />
-          <DetailRow label="Type" value={vehicle.type} />
-          <DetailRow label="Driver" value={vehicle.driverId} mono />
-          <DetailRow
-            label="Status"
-            value={vehicle.status.replace(/_/g, ' ').toUpperCase()}
-            color={STATUS_COLORS[vehicle.status]}
-          />
+      {/* Body content */}
+      <div className="flex-1 overflow-y-auto p-3.5 space-y-4">
+        {/* Status & Driver Badge */}
+        <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Status:</span>
+            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded font-mono text-[11px] font-bold border ${statusStyle}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${vehicle.status === 'en_route' || vehicle.status === 'delivering' ? 'bg-cyan-400 animate-pulse' : 'bg-slate-400'}`} />
+              {vehicle.status.replace(/_/g, ' ').toUpperCase()}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-slate-300">
+            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Driver:</span>
+            <span className="font-mono text-cyan-300 font-semibold">{vehicle.driverId}</span>
+          </div>
           {vehicle.rerouteCount && vehicle.rerouteCount > 0 ? (
-            <DetailRow
-              label="In-Flight Reroutes"
-              value={`${vehicle.rerouteCount}× (${vehicle.rerouteReason || 'optimized'})`}
-              color="var(--accent-cyan)"
-            />
+            <div className="flex items-center justify-between text-slate-300">
+              <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">In-Flight Reroutes:</span>
+              <span className="font-mono text-cyan-400 font-bold">{vehicle.rerouteCount}×</span>
+            </div>
           ) : null}
         </div>
 
-        <div className="detail-section">
-          <h3>Telemetry</h3>
-          <DetailRow
-            label="Position"
-            value={`${vehicle.position.lat.toFixed(5)}, ${vehicle.position.lon.toFixed(5)}`}
-            mono
-          />
-          <DetailRow
-            label="Speed"
-            value={`${vehicle.speed_kmh.toFixed(1)} km/h`}
-            mono
-          />
-          <DetailRow
-            label="Capacity"
-            value={`${vehicle.currentLoad_kg.toFixed(0)} / ${vehicle.capacity_kg} kg`}
-            mono
-          />
+        {/* Telemetry & Gauges */}
+        <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 space-y-2.5">
+          <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Live Telemetry</span>
+          <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+            <div className="bg-slate-950/70 p-2 rounded border border-slate-800/80">
+              <span className="text-[9px] text-slate-500 uppercase block font-sans">Speed</span>
+              <span className="font-bold text-sky-400 text-sm">{vehicle.speed_kmh.toFixed(1)} <span className="text-[10px] text-slate-400">km/h</span></span>
+            </div>
+            <div className="bg-slate-950/70 p-2 rounded border border-slate-800/80">
+              <span className="text-[9px] text-slate-500 uppercase block font-sans">Coordinates</span>
+              <span className="text-slate-300 text-[10px]">{vehicle.position.lat.toFixed(4)}, {vehicle.position.lon.toFixed(4)}</span>
+            </div>
+          </div>
+
+          {/* Capacity Gauge */}
+          <div className="space-y-1">
+            <div className="flex justify-between text-[10px] text-slate-400">
+              <span>Capacity Load ({vehicle.currentLoad_kg.toFixed(0)} / {vehicle.capacity_kg} kg)</span>
+              <span className="font-mono">{loadPercent}%</span>
+            </div>
+            <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all duration-300 ${loadPercent > 80 ? 'bg-rose-500' : 'bg-cyan-400'}`}
+                style={{ width: `${loadPercent}%` }}
+              />
+            </div>
+          </div>
         </div>
 
+        {/* Route / Tour Progress */}
         {vehicle.routeGeometry.length > 1 && (
-          <div className="detail-section">
-            <h3>{vehicle.routeLegs && vehicle.routeLegs.length > 1 ? 'Multi-Stop Tour' : 'Current Route'}</h3>
+          <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
+                {vehicle.routeLegs && vehicle.routeLegs.length > 1 ? 'Multi-Stop Tour' : 'Current Route'}
+              </span>
+              <span className="font-mono text-cyan-300 font-bold text-[11px]">{progressPercent}%</span>
+            </div>
+
+            <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono pt-1 text-slate-300">
+              <div>
+                <span className="text-[9px] text-slate-500 uppercase block font-sans">Distance</span>
+                {(vehicle.routeDistanceM / 1000).toFixed(2)} km
+              </div>
+              <div>
+                <span className="text-[9px] text-slate-500 uppercase block font-sans">Duration</span>
+                {(vehicle.routeDurationS / 60).toFixed(1)} min
+              </div>
+            </div>
+
             {vehicle.routeLegs && vehicle.routeLegs.length > 1 && (
-              <>
-                <DetailRow
-                  label="Tour Progress"
-                  value={`Leg ${(vehicle.currentLegIndex ?? 0) + 1} of ${vehicle.totalLegsCount || vehicle.routeLegs.length}`}
-                  color="var(--accent-cyan)"
-                  mono
-                />
-                <DetailRow
-                  label="Current Leg Target"
-                  value={
-                    vehicle.routeLegs[vehicle.currentLegIndex ?? 0]?.orderId
-                      ? `Drop Order ${vehicle.routeLegs[vehicle.currentLegIndex ?? 0].orderId}`
-                      : `Return to Depot (${vehicle.depotId})`
-                  }
-                  color="var(--color-orange)"
-                />
-                <DetailRow
-                  label="Remaining Drops"
-                  value={`${vehicle.assignedOrderIds.length} order(s)`}
-                  mono
-                />
-              </>
-            )}
-            <DetailRow
-              label={vehicle.routeLegs && vehicle.routeLegs.length > 1 ? 'Leg Distance' : 'Distance'}
-              value={`${(vehicle.routeDistanceM / 1000).toFixed(2)} km`}
-              mono
-            />
-            <DetailRow
-              label={vehicle.routeLegs && vehicle.routeLegs.length > 1 ? 'Leg Duration' : 'Duration'}
-              value={`${(vehicle.routeDurationS / 60).toFixed(1)} min`}
-              mono
-            />
-            <DetailRow
-              label={vehicle.routeLegs && vehicle.routeLegs.length > 1 ? 'Leg Progress' : 'Progress'}
-              value={`${(vehicle.routeProgress * 100).toFixed(1)}%`}
-              mono
-            />
-            {vehicle.currentRouteId && (
-              <DetailRow label="Route ID" value={vehicle.currentRouteId} mono />
+              <div className="pt-2 border-t border-slate-800 space-y-1">
+                <span className="text-[9px] text-slate-400 uppercase font-bold block">Itinerary</span>
+                <div className="space-y-1 max-h-28 overflow-y-auto">
+                  {vehicle.routeLegs.map((leg, idx) => {
+                    const isDone = idx < (vehicle.currentLegIndex ?? 0);
+                    const isCurrent = idx === (vehicle.currentLegIndex ?? 0);
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex items-center justify-between p-1.5 rounded text-[10px] font-mono ${
+                          isCurrent
+                            ? 'bg-cyan-500/15 border border-cyan-500/40 text-cyan-200'
+                            : isDone
+                            ? 'text-slate-500'
+                            : 'bg-slate-950/40 text-slate-400'
+                        }`}
+                      >
+                        <span>
+                          {isDone ? '✓' : isCurrent ? '📍' : '○'} {leg.orderId ? `Drop: ${leg.orderId}` : `Depot Return`}
+                        </span>
+                        <span>{(leg.distanceM / 1000).toFixed(1)}km</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
         )}
 
-        {vehicle.routeLegs && vehicle.routeLegs.length > 1 && (
-          <div className="detail-section">
-            <h3>Tour Itinerary ({vehicle.routeLegs.length} Legs)</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.8rem' }}>
-              {vehicle.routeLegs.map((leg, idx) => {
-                const isCurrent = idx === (vehicle.currentLegIndex ?? 0);
-                const isDone = idx < (vehicle.currentLegIndex ?? 0);
+        {/* VRPTW Assigned Orders */}
+        <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Assigned Orders</span>
+            <span className="font-mono text-xs font-bold text-slate-300">{vehicle.assignedOrderIds.length}</span>
+          </div>
+
+          {vehicle.assignedOrderIds.length > 0 ? (
+            <div className="space-y-1.5">
+              {vehicle.assignedOrderIds.map((orderId) => {
+                const order = orders.find((o) => o.id === orderId);
+                const priority = order?.priority || 'standard';
+                const slaStatus = order?.slaStatus || 'on_time';
+                const remainingMs = order?.slaDeadline ? order.slaDeadline - simTime : null;
+                const remainingMin = remainingMs !== null ? Math.round(remainingMs / 60000) : null;
+
+                const priorityBadge =
+                  priority === 'urgent'
+                    ? 'bg-rose-950/70 text-rose-300 border-rose-500/40'
+                    : priority === 'express'
+                    ? 'bg-amber-950/70 text-amber-300 border-amber-500/40'
+                    : 'bg-blue-950/70 text-blue-300 border-blue-500/40';
+
                 return (
-                  <div
-                    key={idx}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '0.3rem 0.5rem',
-                      borderRadius: '4px',
-                      background: isCurrent ? 'rgba(0, 229, 255, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                      border: isCurrent ? '1px solid var(--accent-cyan)' : '1px solid transparent',
-                    }}
-                  >
-                    <span>
-                      {isDone ? '✅' : isCurrent ? '📍' : '⏳'} {leg.orderId ? `Drop: ${leg.orderId}` : `Depot: ${vehicle.depotId}`}
-                    </span>
-                    <span className="mono-font" style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>
-                      {(leg.distanceM / 1000).toFixed(1)}km
-                    </span>
+                  <div key={orderId} className="p-2 rounded bg-slate-950/60 border border-slate-800 space-y-1">
+                    <div className="flex items-center justify-between font-mono">
+                      <span className="font-bold text-slate-200 text-[11px]">{orderId}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase border ${priorityBadge}`}>
+                        {priority} {order?.slaDurationMin ? `(${order.slaDurationMin}m)` : ''}
+                      </span>
+                    </div>
+
+                    {order?.slaDeadline && (
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                        <span>SLA Status:</span>
+                        <span
+                          className={`font-bold ${
+                            slaStatus === 'breached'
+                              ? 'text-rose-400'
+                              : slaStatus === 'at_risk'
+                              ? 'text-amber-400'
+                              : 'text-emerald-400'
+                          }`}
+                        >
+                          {slaStatus === 'breached'
+                            ? `⚠️ Breached (${Math.abs(remainingMin || 0)}m late)`
+                            : slaStatus === 'at_risk'
+                            ? `⚡ At Risk (${remainingMin}m left)`
+                            : `✓ On Time (${remainingMin}m left)`}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
-          </div>
-        )}
-
-        <div className="detail-section">
-          <h3>VRPTW Order Assignments</h3>
-          <DetailRow label="Depot" value={vehicle.depotId} mono />
-          <div className="detail-row" style={{ flexDirection: 'column' }}>
-            <span className="detail-label" style={{ marginBottom: '0.5rem' }}>
-              Orders ({vehicle.assignedOrderIds.length}):
-            </span>
-            {vehicle.assignedOrderIds.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {vehicle.assignedOrderIds.map((orderId) => {
-                  const order = orders.find((o) => o.id === orderId);
-                  const priority = order?.priority || 'standard';
-                  const slaStatus = order?.slaStatus || 'on_time';
-                  const remainingMs = order?.slaDeadline ? order.slaDeadline - simTime : null;
-                  const remainingMin = remainingMs !== null ? Math.round(remainingMs / 60000) : null;
-
-                  return (
-                    <div
-                      key={orderId}
-                      style={{
-                        padding: '0.5rem',
-                        background: 'rgba(255, 255, 255, 0.04)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '6px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '0.25rem',
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span className="mono-font" style={{ fontWeight: 600 }}>{orderId}</span>
-                        <span
-                          style={{
-                            fontSize: '0.7rem',
-                            fontWeight: 700,
-                            padding: '0.1rem 0.4rem',
-                            borderRadius: '4px',
-                            background:
-                              priority === 'urgent'
-                                ? 'rgba(255, 23, 68, 0.2)'
-                                : priority === 'express'
-                                ? 'rgba(255, 145, 0, 0.2)'
-                                : 'rgba(41, 121, 255, 0.2)',
-                            color:
-                              priority === 'urgent'
-                                ? 'var(--color-red)'
-                                : priority === 'express'
-                                ? 'var(--color-orange)'
-                                : 'var(--color-blue)',
-                            border: `1px solid ${
-                              priority === 'urgent'
-                                ? 'rgba(255, 23, 68, 0.4)'
-                                : priority === 'express'
-                                ? 'rgba(255, 145, 0, 0.4)'
-                                : 'rgba(41, 121, 255, 0.4)'
-                            }`,
-                          }}
-                        >
-                          {priority.toUpperCase()} {order?.slaDurationMin ? `(${order.slaDurationMin}m)` : ''}
-                        </span>
-                      </div>
-
-                      {order?.slaDeadline && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                          <span style={{ color: 'var(--text-dim)' }}>SLA Deadline:</span>
-                          <span
-                            className="mono-font"
-                            style={{
-                              fontWeight: 600,
-                              color:
-                                slaStatus === 'breached'
-                                  ? 'var(--color-red)'
-                                  : slaStatus === 'at_risk'
-                                  ? 'var(--color-orange)'
-                                  : 'var(--color-green)',
-                            }}
-                          >
-                            {slaStatus === 'breached'
-                              ? `⚠️ BREACHED (${Math.abs(remainingMin || 0)}m late)`
-                              : slaStatus === 'at_risk'
-                              ? `⚡ AT RISK (${remainingMin}m left)`
-                              : `✓ ON TIME (${remainingMin}m left)`}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <span className="detail-value" style={{ color: 'var(--text-dim)' }}>
-                None
-              </span>
-            )}
-          </div>
+          ) : (
+            <p className="text-[11px] text-slate-500 italic">No packages assigned.</p>
+          )}
         </div>
 
-        <div className="detail-section">
-          <h3>Operator Intervention</h3>
+        {/* Operator Interventions */}
+        <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 space-y-2">
+          <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Operator Interventions</span>
           {(vehicle.status === 'en_route' || vehicle.status === 'returning') && (
             <button
-              className="btn btn-secondary"
-              style={{ width: '100%', marginBottom: '0.6rem' }}
               onClick={() => onInjectEvent?.({ type: 'reroute_vehicle', targetId: vehicle.id, payload: { reason: 'operator_dispatch' } })}
+              className="w-full py-1.5 px-2 bg-cyan-950/70 hover:bg-cyan-900/70 text-cyan-300 border border-cyan-500/40 rounded font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              🔄 In-Flight Re-Route to Destination
+              🔄 In-Flight Re-Route Fleet
             </button>
           )}
 
           {vehicle.status === 'broken_down' ? (
             <button
-              className="btn btn-primary"
-              style={{ width: '100%' }}
               onClick={() => onInjectEvent?.({ type: 'vehicle_recover', targetId: vehicle.id })}
+              className="w-full py-1.5 px-2 bg-emerald-950/70 hover:bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 rounded font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
             >
               🛠️ Repair & Recover Vehicle
             </button>
           ) : (
             <button
-              className="btn btn-danger"
-              style={{ width: '100%' }}
               onClick={() => onInjectEvent?.({ type: 'vehicle_breakdown', targetId: vehicle.id })}
+              className="w-full py-1.5 px-2 bg-rose-950/70 hover:bg-rose-900/70 text-rose-300 border border-rose-500/40 rounded font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
             >
               💥 Trigger Breakdown
             </button>
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function DetailRow({
-  label,
-  value,
-  mono,
-  color,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-  color?: string;
-}) {
-  return (
-    <div className="detail-row">
-      <span className="detail-label">{label}:</span>
-      <span
-        className={`detail-value${mono ? ' mono-font' : ''}`}
-        style={color ? { color } : undefined}
-      >
-        {value}
-      </span>
-    </div>
+    </aside>
   );
 }

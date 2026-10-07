@@ -1,16 +1,26 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { MapView } from './components/MapView';
 import { ControlBar } from './components/ControlBar';
 import { StatsBar } from './components/StatsBar';
 import { VehiclePanel } from './components/VehiclePanel';
 import { IncidentPanel } from './components/IncidentPanel';
 import { BenchmarkModal } from './components/BenchmarkModal';
+import { NotificationToast, NotificationItem } from './components/NotificationToast';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useSimulation } from './hooks/useSimulation';
 import { useWebSocket } from './hooks/useWebSocket';
 import type { SimulationState, SimulationEvent, Vehicle, RoutingAlgorithm, DispatchStrategy } from './types';
 import './index.css';
 
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <ControlRoom />
+    </ErrorBoundary>
+  );
+}
+
+function ControlRoom() {
   const {
     state,
     loading,
@@ -29,6 +39,7 @@ export default function App() {
   const [benchmarkModalOpen, setBenchmarkModalOpen] = useState<boolean>(false);
   const [showTrails, setShowTrails] = useState<boolean>(true);
   const [showHeatmap, setShowHeatmap] = useState<boolean>(true);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   const handleStateUpdate = useCallback(
     (newState: SimulationState) => {
@@ -37,9 +48,86 @@ export default function App() {
     [updateState]
   );
 
-  const handleEvent = useCallback((_event: SimulationEvent) => {
-    // Live domain event updates
+  const handleEvent = useCallback((event: SimulationEvent) => {
+    const payload = event.payload as Record<string, any> | undefined;
+
+    if (event.eventType === 'order.sla.breached') {
+      setNotifications((prev) => [
+        ...prev,
+        {
+          id: event.eventId,
+          type: 'warning',
+          title: 'SLA Breached',
+          message: `Order ${event.entityId} (${payload?.priority || 'standard'}) breached delivery window.`,
+          timestamp: Date.now(),
+        },
+      ]);
+    } else if (event.eventType === 'vehicle.failed') {
+      setNotifications((prev) => [
+        ...prev,
+        {
+          id: event.eventId,
+          type: 'error',
+          title: 'Vehicle Breakdown',
+          message: `Vehicle ${event.entityId} broke down. Active orders returned to dispatch queue.`,
+          timestamp: Date.now(),
+        },
+      ]);
+    } else if (event.eventType === 'incident.created') {
+      setNotifications((prev) => [
+        ...prev,
+        {
+          id: event.eventId,
+          type: 'error',
+          title: 'Road Hazard Alert',
+          message: `${payload?.description || 'Hazard'} active (${payload?.radiusM || 500}m). Fleet auto-rerouted.`,
+          timestamp: Date.now(),
+        },
+      ]);
+    } else if (event.eventType === 'scenario.loaded') {
+      setNotifications((prev) => [
+        ...prev,
+        {
+          id: event.eventId,
+          type: 'success',
+          title: 'Scenario Loaded',
+          message: `Switched to "${payload?.name || 'Preset'}" with ${payload?.vehicles || 30} vehicles.`,
+          timestamp: Date.now(),
+        },
+      ]);
+    }
   }, []);
+
+  const dismissNotification = useCallback((id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  }, []);
+
+  // Keyboard Shortcuts for Mission Control
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (state?.status === 'running') {
+          pauseSimulation();
+        } else if (state?.status === 'paused') {
+          resumeSimulation();
+        }
+      } else if (e.key === 't' || e.key === 'T') {
+        setShowTrails((prev) => !prev);
+      } else if (e.key === 'h' || e.key === 'H') {
+        setShowHeatmap((prev) => !prev);
+      } else if (e.key === 'Escape') {
+        setSelectedVehicleId(null);
+        setIncidentModalOpen(false);
+        setBenchmarkModalOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [state?.status, pauseSimulation, resumeSimulation]);
 
   const handleInjectIncident = async (event: {
     type: string;
@@ -83,9 +171,10 @@ export default function App() {
 
   if (loading || !state) {
     return (
-      <div className="loading-screen">
-        <h2>Logistics Sandbox</h2>
-        <p>Connecting to simulation server...</p>
+      <div className="flex flex-col items-center justify-center h-screen w-screen bg-slate-950 text-slate-200 select-none">
+        <div className="w-10 h-10 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4" />
+        <h2 className="text-base font-bold text-cyan-400 tracking-wide">Logistics Sandbox Digital Twin</h2>
+        <p className="text-xs text-slate-500 mt-1 font-mono">Connecting to simulation server...</p>
       </div>
     );
   }
@@ -106,7 +195,7 @@ export default function App() {
   };
 
   return (
-    <div className="app-container">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 select-none">
       <ControlBar
         simTime={formatSimTime(state.simTime)}
         speed={state.speed}
@@ -130,7 +219,7 @@ export default function App() {
         onOpenBenchmark={() => setBenchmarkModalOpen(true)}
       />
 
-      <div className="main-content">
+      <div className="flex flex-1 overflow-hidden relative">
         <MapView
           vehicles={vehicles}
           warehouses={warehouses}
@@ -171,6 +260,11 @@ export default function App() {
         onClose={() => setBenchmarkModalOpen(false)}
         stats={state.benchmarkStats}
         onUpdateAlgorithms={handleUpdateAlgorithms}
+      />
+
+      <NotificationToast
+        notifications={notifications}
+        onDismiss={dismissNotification}
       />
     </div>
   );

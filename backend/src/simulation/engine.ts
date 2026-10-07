@@ -92,6 +92,9 @@ export class SimulationEngine {
     totalOrdersAssigned: 0,
   };
 
+  /** Cumulative distance driven across all completed vehicle routes (km) */
+  private cumulativeDistanceKm: number = 0;
+
   constructor() {
     this.simulationId = uuidv4();
     this.clock = new SimulationClock();
@@ -294,6 +297,7 @@ export class SimulationEngine {
       totalNodesVisited: 0,
       totalOrdersAssigned: 0,
     };
+    this.cumulativeDistanceKm = 0;
 
     const durationMs = scenario.duration_hours * 60 * 60 * 1000;
     this.orderGenerationIntervalMs = durationMs / this.targetOrderCount;
@@ -652,6 +656,7 @@ export class SimulationEngine {
       }
 
       // Check if there are more legs in this tour
+      if (leg) this.cumulativeDistanceKm += leg.distanceM / 1000;
       const nextIndex = legIndex + 1;
       if (nextIndex < vehicle.routeLegs.length) {
         vehicle.currentLegIndex = nextIndex;
@@ -737,6 +742,9 @@ export class SimulationEngine {
   }
 
   private resetVehicleToIdle(vehicle: Vehicle): void {
+    if (vehicle.routeDistanceM > 0 && vehicle.routeProgress >= 0.9) {
+      this.cumulativeDistanceKm += vehicle.routeDistanceM / 1000;
+    }
     vehicle.status = 'idle';
     vehicle.routeGeometry = [];
     vehicle.routeProgress = 0;
@@ -794,12 +802,13 @@ export class SimulationEngine {
       avgDeliveryTimeMin = totalDeliveryTime / deliveredOrders.length / 60000;
     }
 
-    const totalDistanceKm = vehicles.reduce((sum, v) => {
+    const activeDistanceKm = vehicles.reduce((sum, v) => {
       if (v.routeDistanceM > 0 && v.routeProgress > 0) {
         return sum + (v.routeDistanceM * v.routeProgress) / 1000;
       }
       return sum;
     }, 0);
+    const totalDistanceKm = this.cumulativeDistanceKm + activeDistanceKm;
 
     // Calculate SLA compliance metrics
     const slaDelivered = deliveredOrders.filter((o) => !!o.slaDeadline);
