@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import Map from 'react-map-gl/maplibre';
 import { DeckGL } from '@deck.gl/react';
 import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
-import type { Vehicle, Warehouse } from '../types';
+import type { Vehicle, Warehouse, RoadIncident } from '../types';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 const INITIAL_VIEW_STATE = {
@@ -25,11 +25,12 @@ const STATUS_COLORS: Record<string, [number, number, number, number]> = {
 interface MapViewProps {
   vehicles: Vehicle[];
   warehouses: Warehouse[];
+  incidents?: RoadIncident[];
   selectedVehicleId: string | null;
   onVehicleClick: (id: string) => void;
 }
 
-export function MapView({ vehicles, warehouses, selectedVehicleId, onVehicleClick }: MapViewProps) {
+export function MapView({ vehicles, warehouses, incidents, selectedVehicleId, onVehicleClick }: MapViewProps) {
   const layers = useMemo(() => {
     // Route paths for vehicles that have route geometry
     const routeLayer = new PathLayer({
@@ -60,6 +61,25 @@ export function MapView({ vehicles, warehouses, selectedVehicleId, onVehicleClic
       getLineColor: [255, 255, 255, 200],
     });
 
+    // Road Incident Hazard Zones
+    const incidentLayer = new ScatterplotLayer({
+      id: 'incidents-layer',
+      data: (incidents || []).filter((i) => i.active),
+      pickable: true,
+      opacity: 0.65,
+      stroked: true,
+      filled: true,
+      radiusUnits: 'meters',
+      getRadius: (d: RoadIncident) => d.radiusM,
+      getFillColor: [255, 30, 30, 75],
+      getLineColor: [255, 50, 50, 240],
+      getLineWidth: 2,
+      lineWidthMinPixels: 2,
+      updateTriggers: {
+        getRadius: [incidents?.map((i) => `${i.id}-${i.radiusM}`).join(',')],
+      },
+    });
+
     // Vehicle markers
     const vehicleLayer = new ScatterplotLayer({
       id: 'vehicles-layer',
@@ -74,22 +94,26 @@ export function MapView({ vehicles, warehouses, selectedVehicleId, onVehicleClic
       getPosition: (d: Vehicle) => [d.position.lon, d.position.lat] as [number, number],
       getFillColor: (d: Vehicle) => STATUS_COLORS[d.status] ?? [150, 150, 150, 200],
       getLineColor: (d: Vehicle) =>
-        d.id === selectedVehicleId ? [255, 255, 255, 255] : [0, 0, 0, 100],
-      getLineWidth: (d: Vehicle) => (d.id === selectedVehicleId ? 3 : 1),
+        d.id === selectedVehicleId
+          ? [255, 255, 255, 255]
+          : (d.rerouteCount && d.rerouteCount > 0)
+          ? [0, 229, 255, 220]
+          : [0, 0, 0, 100],
+      getLineWidth: (d: Vehicle) => (d.id === selectedVehicleId ? 3 : (d.rerouteCount && d.rerouteCount > 0) ? 2 : 1),
       onClick: (info) => {
         if (info.object) {
           onVehicleClick((info.object as Vehicle).id);
         }
       },
       updateTriggers: {
-        getFillColor: [vehicles.map(v => v.status).join(',')],
-        getLineColor: [selectedVehicleId],
-        getLineWidth: [selectedVehicleId],
+        getFillColor: [vehicles.map((v) => v.status).join(',')],
+        getLineColor: [selectedVehicleId, vehicles.map((v) => v.rerouteCount || 0).join(',')],
+        getLineWidth: [selectedVehicleId, vehicles.map((v) => v.rerouteCount || 0).join(',')],
       },
     });
 
-    return [routeLayer, warehouseLayer, vehicleLayer];
-  }, [vehicles, warehouses, selectedVehicleId, onVehicleClick]);
+    return [incidentLayer, routeLayer, warehouseLayer, vehicleLayer];
+  }, [vehicles, warehouses, incidents, selectedVehicleId, onVehicleClick]);
 
   return (
     <div className="map-container">

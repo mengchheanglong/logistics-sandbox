@@ -23,6 +23,7 @@ import { RoutingClient } from '../routing/client.js';
 import { EcommerceClient, EcommerceOrder } from '../integrations/ecommerce.js';
 import { defaultScenario } from '../scenarios/default.js';
 import {
+  Coordinate,
   SimulationState,
   SimulationEvent,
   Vehicle,
@@ -30,8 +31,14 @@ import {
   RoutingAlgorithm,
   DispatchStrategy,
   AlgorithmBenchmarkStats,
+  RoadIncident,
 } from '../world/types.js';
-import { interpolateAlongPath, randomPointInBounds } from '../utils/geo.js';
+import {
+  interpolateAlongPath,
+  randomPointInBounds,
+  haversineDistance,
+  calculateAvoidanceWaypoint,
+} from '../utils/geo.js';
 import { v4 as uuidv4 } from 'uuid';
 
 export class SimulationEngine {
@@ -47,6 +54,9 @@ export class SimulationEngine {
   private intervalId: NodeJS.Timeout | null = null;
   private readonly TICK_RATE_MS = 100;
   private lastTickTime: number = 0;
+
+  /** Active road hazard incidents */
+  private incidents: RoadIncident[] = [];
 
   /** How many orders have been generated so far */
   private ordersGenerated: number = 0;
@@ -683,6 +693,7 @@ export class SimulationEngine {
       ecommerceBridge: this.ecommerceClient.getStatus(),
       trafficMultiplier: this.trafficMultiplier,
       benchmarkStats: this.getBenchmarkStats(),
+      incidents: this.incidents.filter((i) => i.active),
       stats: {
         activeVehicles: activeVehicles.length,
         totalOrders: orders.length,
@@ -738,6 +749,313 @@ export class SimulationEngine {
       totalDistanceDrivenKm: Math.round(totalDistanceDrivenKm * 10) / 10,
       totalOrdersAssigned: this.benchmarkMetrics.totalOrdersAssigned,
     };
+  }
+
+  /**
+   * Check if a route's remaining polyline intersects an incident circle.
+   */
+  public isRouteIntersectingIncident(
+    path: [number, number][],
+    progress: number,
+    incident: RoadIncident
+  ): boolean {
+    if (!path || path.length === 0) return false;
+    const startIndex = Math.min(path.length - 1, Math.ceil(progress * (path.length - 1)));
+    for (let i = startIndex; i < path.length; i++) {
+      const pt = { lon: path[i][0], lat: path[i][1] };
+      if (haversineDistance(pt, incident.position) <= incident.radiusM) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Create an active road hazard incident (e.g. accident, flooding, road closure).
+   * Automatically re-routes affected en-route vehicles around the incident hazard.
+   */
+  public createRoadIncident(incidentData: {
+    type: 'accident' | 'road_work' | 'flooding' | 'congestion';
+    description: string;
+    position: Coordinate;
+    radiusM: number;
+    severity?: 'low' | 'medium' | 'high' | 'critical';
+    autoRerouteAffected?: boolean;
+  }): RoadIncident {
+    const id = `INC-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const incident: RoadIncident = {
+      id,
+      type: incidentData.type,
+      description: incidentData.description,
+      position: incidentData.position,
+      radiusM: incidentData.radiusM,
+      severity: incidentData.severity || 'high',
+      createdAt: this.clock.getSimulatedTime(),
+      active: true,
+    };
+
+    this.incidents.push(incident);
+
+    this.emitEvent('incident', incident.id, 'incident.created', {
+      type: incident.type,
+      description: incident.description,
+      position: incident.position,
+      radiusM: incident.radiusM,
+      severity: incident.severity,
+    });
+
+    console.log(`[SimulationEngine] Road incident created: ${incident.description} (${incident.id})`);
+
+    // Check for en-route vehicles whose remaining route passes through the hazard zone
+    const affectedVehicles = this.world.getAllVehicles().filter((v) => {
+      if (v.status !== 'en_route' && v.status !== 'returning') return false;
+      return this.isRouteIntersectingIncident(v.routeGeometry, v.routeProgress, incident);
+    });
+
+    if (incidentData.autoRerouteAffected !== false && affectedVehicles.length > 0) {
+      console.log(`[SimulationEngine] Hazard intersects ${affectedVehicles.length} vehicles. Auto-rerouting fleet...`);
+      for (const vehicle of affectedVehicles) {
+        this.rerouteVehicle(vehicle.id, {
+          reason: `hazard_avoidance_${incident.type}`,
+          avoidIncidents: true,
+        }).catch((err) => {
+          console.warn(`[SimulationEngine] Auto-reroute failed for ${vehicle.id}:`, (err as Error).message);
+        });
+      }
+    }
+
+    return incident;
+  }
+
+  /**
+   * Clear an active road hazard incident.
+   */
+  public clearRoadIncident(incidentId: string): boolean {
+    const incident = this.incidents.find((i) => i.id === incidentId);
+    if (!incident || !incident.active) return false;
+
+    incident.active = false;
+    this.emitEvent('incident', incident.id, 'incident.cleared', {
+      incidentId: incident.id,
+      description: incident.description,
+    });
+
+    console.log(`[SimulationEngine] Road incident cleared: ${incident.id}`);
+    return true;
+  }
+
+  /**
+   * Get all active road incidents.
+   */
+  public getActiveIncidents(): RoadIncident[] {
+    return this.incidents.filter((i) => i.active);
+  }
+
+  /**
+   * Re-route a specific vehicle currently en-route from its live GPS position to its destination.
+   * If an active hazard blocks the path, routes around the hazard via an avoidance detour.
+   */
+  public async rerouteVehicle(
+    vehicleId: string,
+    options?: { reason?: string; avoidIncidents?: boolean }
+  ): Promise<{
+    success: boolean;
+    message: string;
+    vehicleId: string;
+    oldRemainingDistanceM?: number;
+    newDistanceM?: number;
+    newDurationS?: number;
+    rerouteCount?: number;
+  }> {
+    const vehicle = this.world.getVehicle(vehicleId);
+    if (!vehicle) {
+      return { success: false, message: 'Vehicle not found', vehicleId };
+    }
+
+    if (vehicle.status !== 'en_route' && vehicle.status !== 'returning') {
+      return {
+        success: false,
+        message: `Vehicle ${vehicle.id} is ${vehicle.status}. In-flight re-routing only applies to en_route or returning vehicles.`,
+        vehicleId,
+      };
+    }
+
+    // Determine destination target
+    let targetDestination: Coordinate | null = null;
+    if (vehicle.routeLegs && vehicle.routeLegs.length > 0) {
+      const leg = vehicle.routeLegs[vehicle.currentLegIndex ?? 0];
+      if (leg) targetDestination = leg.destination;
+    } else if (vehicle.status === 'en_route' && vehicle.assignedOrderIds.length > 0) {
+      const order = this.world.getOrder(vehicle.assignedOrderIds[0]);
+      if (order) targetDestination = order.deliveryLocation;
+    } else if (vehicle.status === 'returning') {
+      const depot = this.world.getAllWarehouses().find((w) => w.id === vehicle.depotId);
+      if (depot) targetDestination = depot.position;
+    }
+
+    if (!targetDestination && vehicle.routeGeometry.length > 0) {
+      const last = vehicle.routeGeometry[vehicle.routeGeometry.length - 1];
+      targetDestination = { lon: last[0], lat: last[1] };
+    }
+
+    if (!targetDestination) {
+      return { success: false, message: `Could not resolve destination for vehicle ${vehicle.id}`, vehicleId };
+    }
+
+    const avoid = options?.avoidIncidents ?? true;
+    const activeIncidents = this.incidents.filter((i) => i.active);
+    let blockingIncident: RoadIncident | undefined;
+
+    if (avoid) {
+      blockingIncident = activeIncidents.find((inc) =>
+        this.isRouteIntersectingIncident(vehicle.routeGeometry, vehicle.routeProgress, inc)
+      );
+    }
+
+    const departureTime = this.clock.getFormattedTime().slice(0, 5);
+    let newPath: [number, number][];
+    let newDistanceM: number;
+    let newDurationS: number;
+    let queries = 0;
+    let queryTimeMs = 0;
+    let nodesVisited = 0;
+
+    if (blockingIncident) {
+      // Calculate road detour around hazard
+      const detourPoint = calculateAvoidanceWaypoint(
+        vehicle.position,
+        targetDestination,
+        blockingIncident.position,
+        blockingIncident.radiusM
+      );
+
+      try {
+        const leg1 = await this.routingClient.calculateRoute(vehicle.position, detourPoint, {
+          algorithm: this.activeRoutingAlgorithm,
+          metric: 'time',
+          departureTime,
+        });
+        const leg2 = await this.routingClient.calculateRoute(detourPoint, targetDestination, {
+          algorithm: this.activeRoutingAlgorithm,
+          metric: 'time',
+          departureTime,
+        });
+
+        newPath = [...leg1.path, ...leg2.path.slice(1)];
+        newDistanceM = leg1.distanceM + leg2.distanceM;
+        newDurationS = leg1.durationS + leg2.durationS;
+        queries = 2;
+        queryTimeMs = (leg1.queryTimeMs || 0) + (leg2.queryTimeMs || 0);
+        nodesVisited = (leg1.nodesVisited || 0) + (leg2.nodesVisited || 0);
+      } catch {
+        // Fallback to direct routing if detour calculation encounters an error
+        const direct = await this.routingClient.calculateRoute(vehicle.position, targetDestination, {
+          algorithm: this.activeRoutingAlgorithm,
+          metric: 'time',
+          departureTime,
+        });
+        newPath = direct.path;
+        newDistanceM = direct.distanceM;
+        newDurationS = direct.durationS;
+        queries = 1;
+        queryTimeMs = direct.queryTimeMs || 0;
+        nodesVisited = direct.nodesVisited || 0;
+      }
+    } else {
+      const direct = await this.routingClient.calculateRoute(vehicle.position, targetDestination, {
+        algorithm: this.activeRoutingAlgorithm,
+        metric: 'time',
+        departureTime,
+      });
+      newPath = direct.path;
+      newDistanceM = direct.distanceM;
+      newDurationS = direct.durationS;
+      queries = 1;
+      queryTimeMs = direct.queryTimeMs || 0;
+      nodesVisited = direct.nodesVisited || 0;
+    }
+
+    const oldRemainingM = Math.round(vehicle.routeDistanceM * (1 - vehicle.routeProgress));
+    vehicle.routeGeometry = newPath;
+    vehicle.routeDistanceM = newDistanceM;
+    vehicle.routeDurationS = newDurationS;
+    vehicle.routeProgress = 0;
+    vehicle.rerouteCount = (vehicle.rerouteCount || 0) + 1;
+    vehicle.lastReroutedAt = this.clock.getSimulatedTime();
+    vehicle.rerouteReason = options?.reason || (blockingIncident ? `avoid_${blockingIncident.type}` : 'in_flight_optimization');
+
+    if (vehicle.routeLegs && vehicle.routeLegs[vehicle.currentLegIndex ?? 0]) {
+      const leg = vehicle.routeLegs[vehicle.currentLegIndex ?? 0];
+      leg.path = newPath;
+      leg.distanceM = newDistanceM;
+      leg.durationS = newDurationS;
+    }
+
+    this.benchmarkMetrics.totalQueries += queries;
+    this.benchmarkMetrics.totalQueryTimeMs += queryTimeMs;
+    this.benchmarkMetrics.totalNodesVisited += nodesVisited;
+
+    this.emitEvent('vehicle', vehicle.id, 'vehicle.rerouted', {
+      vehicleId: vehicle.id,
+      reason: vehicle.rerouteReason,
+      oldRemainingDistanceM: oldRemainingM,
+      newDistanceM,
+      newDurationS,
+      rerouteCount: vehicle.rerouteCount,
+      avoidedIncident: blockingIncident ? blockingIncident.id : null,
+    });
+
+    console.log(
+      `[SimulationEngine] In-flight re-routed ${vehicle.id} (${vehicle.rerouteReason}): oldRem=${(oldRemainingM / 1000).toFixed(2)}km -> new=${(newDistanceM / 1000).toFixed(2)}km`
+    );
+
+    return {
+      success: true,
+      message: `Vehicle ${vehicle.id} dynamically re-routed. New path: ${(newDistanceM / 1000).toFixed(2)}km, ${(newDurationS / 60).toFixed(1)}min.`,
+      vehicleId,
+      oldRemainingDistanceM: oldRemainingM,
+      newDistanceM,
+      newDurationS,
+      rerouteCount: vehicle.rerouteCount,
+    };
+  }
+
+  /**
+   * Re-route all active en-route and returning vehicles across the fleet.
+   */
+  public async rerouteEnRouteFleet(
+    reason: string = 'fleet_traffic_optimization',
+    avoidIncidents: boolean = true
+  ): Promise<{ reroutedCount: number; vehicles: string[] }> {
+    const enRouteVehicles = this.world
+      .getAllVehicles()
+      .filter((v) => v.status === 'en_route' || v.status === 'returning');
+
+    if (enRouteVehicles.length === 0) {
+      return { reroutedCount: 0, vehicles: [] };
+    }
+
+    const results = await Promise.allSettled(
+      enRouteVehicles.map((v) => this.rerouteVehicle(v.id, { reason, avoidIncidents }))
+    );
+
+    const successfulIds: string[] = [];
+    for (let i = 0; i < results.length; i++) {
+      const res = results[i];
+      if (res.status === 'fulfilled' && res.value.success) {
+        successfulIds.push(enRouteVehicles[i].id);
+      }
+    }
+
+    this.emitEvent('simulation', this.simulationId, 'fleet.rerouted', {
+      reason,
+      totalEnRoute: enRouteVehicles.length,
+      reroutedCount: successfulIds.length,
+      vehicles: successfulIds,
+    });
+
+    console.log(`[SimulationEngine] Fleet in-flight re-routing completed: ${successfulIds.length}/${enRouteVehicles.length} vehicles re-routed.`);
+    return { reroutedCount: successfulIds.length, vehicles: successfulIds };
   }
 
   public injectEvent(event: { type: string; targetId?: string; payload?: Record<string, unknown> }): { success: boolean; message: string } {
@@ -838,7 +1156,43 @@ export class SimulationEngine {
         this.emitEvent('traffic', 'city_network', 'traffic.changed', {
           multiplier: factor,
         });
+        if (event.payload?.autoReroute) {
+          this.rerouteEnRouteFleet(`traffic_congestion_${factor}x`, true).catch(console.error);
+        }
         return { success: true, message: `Traffic congestion set to ${factor.toFixed(1)}x slowdown.` };
+      }
+
+      case 'road_incident': {
+        const payload = event.payload || {};
+        const incident = this.createRoadIncident({
+          type: (payload.incidentType as any) || 'accident',
+          description: (payload.description as string) || 'Road Incident Blockade',
+          position: (payload.position as Coordinate) || { lat: 11.5564, lon: 104.9282 },
+          radiusM: Number(payload.radiusM) || 500,
+          severity: (payload.severity as any) || 'high',
+          autoRerouteAffected: payload.autoReroute !== false,
+        });
+        return { success: true, message: `Road incident created: "${incident.description}" (Radius: ${incident.radiusM}m).` };
+      }
+
+      case 'clear_incident': {
+        const incidentId = event.targetId || (event.payload?.incidentId as string);
+        if (!incidentId) return { success: false, message: 'Incident ID required.' };
+        const cleared = this.clearRoadIncident(incidentId);
+        return { success: cleared, message: cleared ? `Incident ${incidentId} cleared.` : 'Incident not found or already inactive.' };
+      }
+
+      case 'reroute_vehicle': {
+        if (!event.targetId) return { success: false, message: 'Target vehicle ID required.' };
+        const reason = (event.payload?.reason as string) || 'operator_command';
+        this.rerouteVehicle(event.targetId, { reason, avoidIncidents: true }).catch(console.error);
+        return { success: true, message: `In-flight re-route requested for vehicle ${event.targetId}.` };
+      }
+
+      case 'reroute_fleet': {
+        const reason = (event.payload?.reason as string) || 'operator_fleet_command';
+        this.rerouteEnRouteFleet(reason, true).catch(console.error);
+        return { success: true, message: 'Fleet-wide in-flight re-route triggered.' };
       }
 
       default:

@@ -27,6 +27,9 @@ export interface Vehicle {
   routeLegs?: RouteLeg[];
   currentLegIndex?: number;
   totalLegsCount?: number;
+  rerouteCount?: number;
+  lastReroutedAt?: number;
+  rerouteReason?: string;
 }
 
 export interface RouteLeg {
@@ -133,6 +136,17 @@ export interface AlgorithmBenchmarkStats {
   totalOrdersAssigned: number;
 }
 
+export interface RoadIncident {
+  id: string;
+  type: 'accident' | 'road_work' | 'flooding' | 'congestion';
+  description: string;
+  position: Coordinate;
+  radiusM: number;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  createdAt: number;
+  active: boolean;
+}
+
 export interface SimulationState {
   simulationId: string;
   simTime: number;
@@ -145,6 +159,7 @@ export interface SimulationState {
   ecommerceBridge?: EcommerceBridgeStatus;
   trafficMultiplier?: number;
   benchmarkStats?: AlgorithmBenchmarkStats;
+  incidents?: RoadIncident[];
 }
 
 export interface DepotConfig {
@@ -155,7 +170,10 @@ export interface DepotConfig {
 
 export interface IncidentConfig {
   type: string;
-  // TODO: Expand
+  description?: string;
+  position?: Coordinate;
+  radiusM?: number;
+  severity?: 'low' | 'medium' | 'high' | 'critical';
 }
 
 export interface ScenarioConfig {

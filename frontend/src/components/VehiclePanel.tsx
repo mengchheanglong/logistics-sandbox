@@ -35,6 +35,13 @@ export function VehiclePanel({ vehicle, onClose, onInjectEvent }: VehiclePanelPr
             value={vehicle.status.replace(/_/g, ' ').toUpperCase()}
             color={STATUS_COLORS[vehicle.status]}
           />
+          {vehicle.rerouteCount && vehicle.rerouteCount > 0 ? (
+            <DetailRow
+              label="In-Flight Reroutes"
+              value={`${vehicle.rerouteCount}× (${vehicle.rerouteReason || 'optimized'})`}
+              color="var(--accent-cyan)"
+            />
+          ) : null}
         </div>
 
         <div className="detail-section">
@@ -160,6 +167,16 @@ export function VehiclePanel({ vehicle, onClose, onInjectEvent }: VehiclePanelPr
 
         <div className="detail-section">
           <h3>Operator Intervention</h3>
+          {(vehicle.status === 'en_route' || vehicle.status === 'returning') && (
+            <button
+              className="btn btn-secondary"
+              style={{ width: '100%', marginBottom: '0.6rem' }}
+              onClick={() => onInjectEvent?.({ type: 'reroute_vehicle', targetId: vehicle.id, payload: { reason: 'operator_dispatch' } })}
+            >
+              🔄 In-Flight Re-Route to Destination
+            </button>
+          )}
+
           {vehicle.status === 'broken_down' ? (
             <button
               className="btn btn-primary"

@@ -123,6 +123,7 @@ export default function App() {
         <MapView
           vehicles={vehicles}
           warehouses={warehouses}
+          incidents={state.incidents || []}
           selectedVehicleId={selectedVehicleId}
           onVehicleClick={setSelectedVehicleId}
         />
@@ -141,6 +142,7 @@ export default function App() {
       <IncidentPanel
         vehicles={vehicles}
         warehouses={warehouses}
+        incidents={state.incidents || []}
         currentTrafficMultiplier={state.trafficMultiplier}
         isOpen={incidentModalOpen}
         onClose={() => setIncidentModalOpen(false)}

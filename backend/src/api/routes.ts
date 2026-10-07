@@ -90,6 +90,53 @@ export function setupRoutes(engine: SimulationEngine): Router {
     res.json(engine.getState().stats);
   });
 
+  // In-flight Dynamic Re-routing & Incident Management
+  router.post('/vehicles/:id/reroute', async (req, res) => {
+    const { reason, avoidIncidents } = req.body || {};
+    const result = await engine.rerouteVehicle(req.params.id, { reason, avoidIncidents });
+    if (!result.success) {
+      res.status(400).json(result);
+    } else {
+      res.json(result);
+    }
+  });
+
+  router.post('/fleet/reroute', async (req, res) => {
+    const { reason, avoidIncidents } = req.body || {};
+    const result = await engine.rerouteEnRouteFleet(reason, avoidIncidents);
+    res.json(result);
+  });
+
+  router.get('/incidents', (req, res) => {
+    res.json(engine.getActiveIncidents());
+  });
+
+  router.post('/incidents', (req, res) => {
+    const { type, description, position, radiusM, severity, autoRerouteAffected } = req.body || {};
+    if (!type || !description || !position || !radiusM) {
+      res.status(400).json({ error: 'type, description, position, and radiusM are required' });
+      return;
+    }
+    const incident = engine.createRoadIncident({
+      type,
+      description,
+      position,
+      radiusM,
+      severity,
+      autoRerouteAffected,
+    });
+    res.json({ status: 'incident_created', incident });
+  });
+
+  router.delete('/incidents/:id', (req, res) => {
+    const cleared = engine.clearRoadIncident(req.params.id);
+    if (cleared) {
+      res.json({ status: 'incident_cleared', id: req.params.id });
+    } else {
+      res.status(404).json({ error: 'Incident not found or already inactive' });
+    }
+  });
+
   // Upstream ecommerce-hive-nosql integration endpoints
   router.get('/integrations/ecommerce/status', (req, res) => {
     res.json(engine.ecommerceClient.getStatus());

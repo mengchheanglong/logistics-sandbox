@@ -118,3 +118,34 @@ export function randomPointInBounds(
 export function formatCoordinate(coord: Coordinate): string {
   return `${coord.lat.toFixed(6)}, ${coord.lon.toFixed(6)}`;
 }
+
+/**
+ * Calculate a detour waypoint around an obstacle coordinate.
+ * Shifts perpendicularly from the trajectory line by 1.5x the obstacle radius.
+ */
+export function calculateAvoidanceWaypoint(
+  from: Coordinate,
+  to: Coordinate,
+  obstacle: Coordinate,
+  radiusM: number
+): Coordinate {
+  const dx = to.lon - from.lon;
+  const dy = to.lat - from.lat;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return obstacle;
+
+  // Perpendicular normal vector
+  const nx = -dy / len;
+  const ny = dx / len;
+
+  // Convert meters to approximate lat/lon degrees (1 deg lat ~ 111,000m)
+  const offsetM = radiusM * 1.5;
+  const latOffset = (ny * offsetM) / 111000;
+  const lonOffset = (nx * offsetM) / (111000 * Math.cos((obstacle.lat * Math.PI) / 180));
+
+  return {
+    lat: obstacle.lat + latOffset,
+    lon: obstacle.lon + lonOffset,
+  };
+}
+

@@ -1,20 +1,57 @@
 import { useState } from 'react';
-import type { Vehicle, Warehouse } from '../types';
+import type { Vehicle, Warehouse, RoadIncident } from '../types';
 
 interface IncidentPanelProps {
   vehicles: Vehicle[];
   warehouses: Warehouse[];
+  incidents?: RoadIncident[];
   currentTrafficMultiplier?: number;
   isOpen: boolean;
   onClose: () => void;
   onInject: (event: { type: string; targetId?: string; payload?: Record<string, unknown> }) => Promise<{ success: boolean; message: string }>;
 }
 
-type TabType = 'vehicles' | 'depots' | 'demand' | 'traffic';
+type TabType = 'vehicles' | 'depots' | 'demand' | 'traffic' | 'hazards';
+
+const HAZARD_PRESETS = [
+  {
+    name: 'Monivong Bridge Bottleneck',
+    type: 'congestion' as const,
+    description: 'Choke point congestion at Monivong Bridge approach',
+    position: { lat: 11.532, lon: 104.935 },
+    radiusM: 600,
+    severity: 'critical' as const,
+  },
+  {
+    name: 'Norodom Blvd Vehicle Crash',
+    type: 'accident' as const,
+    description: 'Multi-vehicle collision blocking Norodom Blvd',
+    position: { lat: 11.557, lon: 104.928 },
+    radiusM: 450,
+    severity: 'high' as const,
+  },
+  {
+    name: 'Russian Market Flash Flood',
+    type: 'flooding' as const,
+    description: 'Monsoon street waterlogging near Russian Market',
+    position: { lat: 11.543, lon: 104.915 },
+    radiusM: 500,
+    severity: 'high' as const,
+  },
+  {
+    name: 'Wat Phnom Roadwork Closure',
+    type: 'road_work' as const,
+    description: 'Pavement resurfacing near Wat Phnom roundabout',
+    position: { lat: 11.576, lon: 104.923 },
+    radiusM: 350,
+    severity: 'medium' as const,
+  },
+];
 
 export function IncidentPanel({
   vehicles,
   warehouses,
+  incidents = [],
   currentTrafficMultiplier = 1.0,
   isOpen,
   onClose,
@@ -25,6 +62,8 @@ export function IncidentPanel({
   const [selectedDepotId, setSelectedDepotId] = useState<string>(warehouses[0]?.id || '');
   const [demandCount, setDemandCount] = useState<number>(25);
   const [trafficFactor, setTrafficFactor] = useState<number>(currentTrafficMultiplier);
+  const [selectedHazardPreset, setSelectedHazardPreset] = useState<number>(0);
+  const [autoRerouteFleet, setAutoRerouteFleet] = useState<boolean>(true);
   const [statusMessage, setStatusMessage] = useState<{ text: string; isError: boolean } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -81,6 +120,12 @@ export function IncidentPanel({
             onClick={() => setActiveTab('traffic')}
           >
             🚦 Traffic Conditions
+          </button>
+          <button
+            className={`incident-tab ${activeTab === 'hazards' ? 'active' : ''}`}
+            onClick={() => setActiveTab('hazards')}
+          >
+            🚧 Road Hazards
           </button>
         </div>
 
@@ -254,15 +299,154 @@ export function IncidentPanel({
                 </div>
               </div>
 
-              <div className="action-buttons">
+              <div className="form-group" style={{ marginTop: '1rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoRerouteFleet}
+                    onChange={(e) => setAutoRerouteFleet(e.target.checked)}
+                  />
+                  <span>Auto-reroute en-route vehicles when traffic level changes</span>
+                </label>
+              </div>
+
+              <div className="action-buttons" style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                 <button
                   className="btn btn-primary"
                   disabled={submitting}
-                  onClick={() => handleAction({ type: 'traffic_congestion', payload: { multiplier: trafficFactor } })}
+                  onClick={() =>
+                    handleAction({
+                      type: 'traffic_congestion',
+                      payload: { multiplier: trafficFactor, autoReroute: autoRerouteFleet },
+                    })
+                  }
                 >
                   🚦 Apply {trafficFactor.toFixed(1)}× Traffic Multiplier
                 </button>
+
+                <button
+                  className="btn btn-secondary"
+                  disabled={submitting}
+                  onClick={() =>
+                    handleAction({
+                      type: 'reroute_fleet',
+                      payload: { reason: `manual_fleet_optimization` },
+                    })
+                  }
+                >
+                  🔄 Re-Route All In-Flight Vehicles ({vehicles.filter((v) => v.status === 'en_route' || v.status === 'returning').length} Active)
+                </button>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'hazards' && (
+            <div className="tab-pane">
+              <p className="pane-desc">
+                Spawn localized road incidents (accidents, construction, floods). Affected en-route vehicles will dynamically detect the obstacle and recalculate an avoidance detour via <code>osm-pathfinder</code>.
+              </p>
+
+              <div className="form-group">
+                <label>Select Hazard Choke Point Preset:</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {HAZARD_PRESETS.map((preset, idx) => (
+                    <div
+                      key={preset.name}
+                      style={{
+                        padding: '0.6rem 0.8rem',
+                        borderRadius: '6px',
+                        border: selectedHazardPreset === idx ? '1px solid var(--accent-cyan)' : '1px solid rgba(255,255,255,0.1)',
+                        background: selectedHazardPreset === idx ? 'rgba(0, 229, 255, 0.1)' : 'rgba(255,255,255,0.02)',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => setSelectedHazardPreset(idx)}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                        <strong>{preset.name}</strong>
+                        <span className="mono-font" style={{ color: 'var(--color-orange)', fontSize: '0.8rem' }}>
+                          Radius: {preset.radiusM}m
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>{preset.description}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoRerouteFleet}
+                    onChange={(e) => setAutoRerouteFleet(e.target.checked)}
+                  />
+                  <span>Auto-reroute intersecting vehicles around hazard</span>
+                </label>
+              </div>
+
+              <div className="action-buttons">
+                <button
+                  className="btn btn-danger"
+                  style={{ width: '100%' }}
+                  disabled={submitting}
+                  onClick={() => {
+                    const preset = HAZARD_PRESETS[selectedHazardPreset];
+                    handleAction({
+                      type: 'road_incident',
+                      payload: {
+                        incidentType: preset.type,
+                        description: preset.name,
+                        position: preset.position,
+                        radiusM: preset.radiusM,
+                        severity: preset.severity,
+                        autoReroute: autoRerouteFleet,
+                      },
+                    });
+                  }}
+                >
+                  🚧 Spawn Road Hazard & Trigger Dynamic Re-Route
+                </button>
+              </div>
+
+              {incidents && incidents.length > 0 && (
+                <div style={{ marginTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem' }}>
+                  <h4 style={{ marginBottom: '0.75rem', fontSize: '0.9rem', color: 'var(--accent-cyan)' }}>
+                    Active Road Hazards ({incidents.filter((i) => i.active).length}):
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {incidents
+                      .filter((i) => i.active)
+                      .map((inc) => (
+                        <div
+                          key={inc.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '0.5rem 0.75rem',
+                            borderRadius: '4px',
+                            background: 'rgba(255, 60, 60, 0.1)',
+                            border: '1px solid rgba(255, 60, 60, 0.3)',
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{inc.description}</div>
+                            <div className="mono-font" style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
+                              {inc.type.toUpperCase()} • Radius: {inc.radiusM}m
+                            </div>
+                          </div>
+                          <button
+                            className="btn btn-secondary"
+                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                            onClick={() => handleAction({ type: 'clear_incident', targetId: inc.id })}
+                          >
+                            ✅ Clear
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
