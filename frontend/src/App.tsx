@@ -4,9 +4,10 @@ import { ControlBar } from './components/ControlBar';
 import { StatsBar } from './components/StatsBar';
 import { VehiclePanel } from './components/VehiclePanel';
 import { IncidentPanel } from './components/IncidentPanel';
+import { BenchmarkModal } from './components/BenchmarkModal';
 import { useSimulation } from './hooks/useSimulation';
 import { useWebSocket } from './hooks/useWebSocket';
-import type { SimulationState, SimulationEvent, Vehicle } from './types';
+import type { SimulationState, SimulationEvent, Vehicle, RoutingAlgorithm, DispatchStrategy } from './types';
 import './index.css';
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
 
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [incidentModalOpen, setIncidentModalOpen] = useState<boolean>(false);
+  const [benchmarkModalOpen, setBenchmarkModalOpen] = useState<boolean>(false);
 
   const handleStateUpdate = useCallback(
     (newState: SimulationState) => {
@@ -57,6 +59,17 @@ export default function App() {
         message: (err as Error).message,
       };
     }
+  };
+
+  const handleUpdateAlgorithms = async (config: {
+    routingAlgorithm?: RoutingAlgorithm;
+    dispatchStrategy?: DispatchStrategy;
+  }) => {
+    await fetch('/api/simulation/algorithm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
   };
 
   // Connect WebSocket — use relative URL so Vite proxy handles it
@@ -96,12 +109,14 @@ export default function App() {
         status={state.status}
         connected={connected}
         ecommerceBridge={state.ecommerceBridge}
+        benchmarkStats={state.benchmarkStats}
         onSpeedChange={setSpeed}
         onPause={pauseSimulation}
         onResume={resumeSimulation}
         onStart={startSimulation}
         onStop={stopSimulation}
         onOpenIncidents={() => setIncidentModalOpen(true)}
+        onOpenBenchmark={() => setBenchmarkModalOpen(true)}
       />
 
       <div className="main-content">
@@ -130,6 +145,13 @@ export default function App() {
         isOpen={incidentModalOpen}
         onClose={() => setIncidentModalOpen(false)}
         onInject={handleInjectIncident}
+      />
+
+      <BenchmarkModal
+        isOpen={benchmarkModalOpen}
+        onClose={() => setBenchmarkModalOpen(false)}
+        stats={state.benchmarkStats}
+        onUpdateAlgorithms={handleUpdateAlgorithms}
       />
     </div>
   );

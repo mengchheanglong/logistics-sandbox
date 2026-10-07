@@ -1,50 +1,39 @@
 /**
  * @fileoverview Dispatch engine for assigning orders to vehicles.
  *
- * V1 implements a simple nearest-available-vehicle strategy:
- * 1. Filter vehicles that are idle and have sufficient capacity
- * 2. Find the nearest vehicle by haversine distance
- * 3. Calculate the actual route via osm-pathfinder
- * 4. Return the assignment with route geometry
- *
- * Future versions will support pluggable dispatch strategies:
- * - Route-aware greedy
- * - Multi-stop optimization
- * - Vehicle Routing Problem (VRP)
- * - VRP with Time Windows (VRPTW)
+ * Supports multiple pluggable dispatch strategies for algorithm comparison:
+ * 1. 'nearest_available': Greedy proximity — assigns to the closest idle vehicle by distance.
+ * 2. 'route_aware': Capacity-weighted greedy — penalizes heavily loaded vehicles and balances fleet utilization.
+ * 3. 'cluster_zone': Geographic clustering — prioritizes vehicles stationed at the depot closest to the customer to minimize cross-city trips.
  */
 
-import { Order, Vehicle } from '../world/types.js';
+import { Order, Vehicle, DispatchStrategy, RoutingAlgorithm } from '../world/types.js';
 import { RoutingClient, RouteResult } from '../routing/client.js';
 import { haversineDistance } from '../utils/geo.js';
 
-/** Result of a successful order assignment */
 export interface AssignmentResult {
-  /** ID of the vehicle assigned to the order */
   vehicleId: string;
-  /** Calculated route from vehicle position to delivery location */
   route: RouteResult;
+  strategyUsed: DispatchStrategy;
 }
 
 export class Dispatcher {
   /**
-   * Attempt to assign an order to the best available vehicle.
-   *
-   * Strategy (V1 — nearest available):
-   * 1. Filter idle vehicles with capacity >= order weight
-   * 2. Sort by haversine distance to pickup location
-   * 3. Try the nearest vehicle first
-   * 4. Calculate route via routing client (pickup → delivery)
-   * 5. Return assignment result
-   *
-   * @returns Assignment result, or null if no vehicle is available
+   * Assign an order to the best available vehicle using the configured strategy.
    */
   public async assignOrder(
     order: Order,
     vehicles: Vehicle[],
-    routingClient: RoutingClient
+    routingClient: RoutingClient,
+    options: {
+      strategy?: DispatchStrategy;
+      routingAlgorithm?: RoutingAlgorithm;
+    } = {}
   ): Promise<AssignmentResult | null> {
-    // Filter eligible vehicles: must be idle and have capacity
+    const strategy = options.strategy || 'nearest_available';
+    const routingAlgorithm = options.routingAlgorithm || 'contraction_hierarchies';
+
+    // 1. Filter eligible idle vehicles with sufficient weight capacity
     const eligible = vehicles.filter(
       (v) => v.status === 'idle' && v.capacity_kg >= order.totalWeight_kg
     );
@@ -53,27 +42,22 @@ export class Dispatcher {
       return null;
     }
 
-    // Sort by haversine distance to the pickup location (depot)
-    const sorted = eligible
-      .map((v) => ({
-        vehicle: v,
-        distance: haversineDistance(v.position, order.pickupLocation),
-      }))
-      .sort((a, b) => a.distance - b.distance);
+    // 2. Select vehicle based on dispatch strategy
+    const chosenVehicle = this.selectVehicle(order, eligible, strategy);
+    if (!chosenVehicle) return null;
 
-    // Try to calculate route for the nearest vehicle
-    // Route goes from pickup (depot) to delivery (customer)
-    const nearest = sorted[0].vehicle;
-
+    // 3. Calculate route with osm-pathfinder using selected routing algorithm
     try {
       const route = await routingClient.calculateRoute(
         order.pickupLocation,
-        order.deliveryLocation
+        order.deliveryLocation,
+        { algorithm: routingAlgorithm, metric: 'time' }
       );
 
       return {
-        vehicleId: nearest.id,
+        vehicleId: chosenVehicle.id,
         route,
+        strategyUsed: strategy,
       };
     } catch (err) {
       console.error(
@@ -81,6 +65,56 @@ export class Dispatcher {
         (err as Error).message
       );
       return null;
+    }
+  }
+
+  /**
+   * Select best vehicle among eligible candidates using the chosen dispatch strategy.
+   */
+  private selectVehicle(
+    order: Order,
+    eligible: Vehicle[],
+    strategy: DispatchStrategy
+  ): Vehicle | null {
+    switch (strategy) {
+      case 'route_aware': {
+        // Balances proximity and remaining vehicle capacity
+        return [...eligible].sort((a, b) => {
+          const distA = haversineDistance(a.position, order.pickupLocation);
+          const distB = haversineDistance(b.position, order.pickupLocation);
+          const loadRatioA = a.currentLoad_kg / a.capacity_kg;
+          const loadRatioB = b.currentLoad_kg / b.capacity_kg;
+
+          // Penalize vehicle with high load ratio
+          const scoreA = distA * (1 + loadRatioA * 0.5);
+          const scoreB = distB * (1 + loadRatioB * 0.5);
+          return scoreA - scoreB;
+        })[0];
+      }
+
+      case 'cluster_zone': {
+        // Prioritize vehicles whose stationed depot is closer to the delivery destination
+        return [...eligible].sort((a, b) => {
+          const depotDistA = haversineDistance(a.position, order.deliveryLocation);
+          const depotDistB = haversineDistance(b.position, order.deliveryLocation);
+          const pickupDistA = haversineDistance(a.position, order.pickupLocation);
+          const pickupDistB = haversineDistance(b.position, order.pickupLocation);
+
+          const scoreA = depotDistA * 0.6 + pickupDistA * 0.4;
+          const scoreB = depotDistB * 0.6 + pickupDistB * 0.4;
+          return scoreA - scoreB;
+        })[0];
+      }
+
+      case 'nearest_available':
+      default: {
+        // Pure greedy proximity to pickup point
+        return [...eligible].sort((a, b) => {
+          const distA = haversineDistance(a.position, order.pickupLocation);
+          const distB = haversineDistance(b.position, order.pickupLocation);
+          return distA - distB;
+        })[0];
+      }
     }
   }
 }

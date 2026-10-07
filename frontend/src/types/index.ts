@@ -73,6 +73,29 @@ export interface EcommerceBridgeStatus {
   telemetryPingsEmittedCount: number;
 }
 
+export type RoutingAlgorithm =
+  | 'contraction_hierarchies'
+  | 'astar'
+  | 'dijkstra'
+  | 'bidirectional_astar';
+
+export type DispatchStrategy =
+  | 'nearest_available'
+  | 'route_aware'
+  | 'cluster_zone';
+
+export interface AlgorithmBenchmarkStats {
+  routingAlgorithm: RoutingAlgorithm;
+  dispatchStrategy: DispatchStrategy;
+  totalQueries: number;
+  totalQueryTimeMs: number;
+  avgQueryTimeMs: number;
+  totalNodesVisited: number;
+  avgNodesVisited: number;
+  totalDistanceDrivenKm: number;
+  totalOrdersAssigned: number;
+}
+
 export interface SimulationState {
   simulationId: string;
   simTime: number;
@@ -84,6 +107,7 @@ export interface SimulationState {
   stats: SimulationStats;
   ecommerceBridge?: EcommerceBridgeStatus;
   trafficMultiplier?: number;
+  benchmarkStats?: AlgorithmBenchmarkStats;
 }
 
 export interface SimulationEvent {

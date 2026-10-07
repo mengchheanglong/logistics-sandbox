@@ -47,6 +47,16 @@ export function setupRoutes(engine: SimulationEngine): Router {
     res.json({ status: 'resumed' });
   });
 
+  router.post('/simulation/algorithm', (req, res) => {
+    const { routingAlgorithm, dispatchStrategy } = req.body;
+    const updated = engine.setAlgorithms({ routingAlgorithm, dispatchStrategy });
+    res.json({ status: 'algorithm_updated', ...updated });
+  });
+
+  router.get('/simulation/benchmark', (req, res) => {
+    res.json(engine.getBenchmarkStats());
+  });
+
   router.get('/vehicles', (req, res) => {
     res.json(engine.world.getAllVehicles());
   });

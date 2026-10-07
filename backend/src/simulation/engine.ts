@@ -21,7 +21,15 @@ import { Dispatcher, AssignmentResult } from '../dispatch/dispatcher.js';
 import { RoutingClient } from '../routing/client.js';
 import { EcommerceClient, EcommerceOrder } from '../integrations/ecommerce.js';
 import { defaultScenario } from '../scenarios/default.js';
-import { SimulationState, SimulationEvent, Vehicle, Order } from '../world/types.js';
+import {
+  SimulationState,
+  SimulationEvent,
+  Vehicle,
+  Order,
+  RoutingAlgorithm,
+  DispatchStrategy,
+  AlgorithmBenchmarkStats,
+} from '../world/types.js';
 import { interpolateAlongPath, randomPointInBounds } from '../utils/geo.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -55,6 +63,19 @@ export class SimulationEngine {
   private dispatching: boolean = false;
   /** Global traffic congestion factor (1.0 = normal, 2.0 = heavy traffic) */
   private trafficMultiplier: number = 1.0;
+
+  /** Active routing algorithm for osm-pathfinder */
+  private activeRoutingAlgorithm: RoutingAlgorithm = 'contraction_hierarchies';
+  /** Active dispatch strategy for assigning orders to vehicles */
+  private activeDispatchStrategy: DispatchStrategy = 'nearest_available';
+
+  /** Aggregated benchmark performance metrics */
+  private benchmarkMetrics = {
+    totalQueries: 0,
+    totalQueryTimeMs: 0,
+    totalNodesVisited: 0,
+    totalOrdersAssigned: 0,
+  };
 
   constructor() {
     this.simulationId = uuidv4();
@@ -278,9 +299,18 @@ export class SimulationEngine {
     this.dispatching = true;
 
     this.dispatcher
-      .assignOrder(order, idleVehicles, this.routingClient)
+      .assignOrder(order, idleVehicles, this.routingClient, {
+        strategy: this.activeDispatchStrategy,
+        routingAlgorithm: this.activeRoutingAlgorithm,
+      })
       .then((result: AssignmentResult | null) => {
         if (result) {
+          // Record benchmark metrics
+          this.benchmarkMetrics.totalQueries++;
+          this.benchmarkMetrics.totalQueryTimeMs += result.route.queryTimeMs || 0;
+          this.benchmarkMetrics.totalNodesVisited += result.route.nodesVisited || 0;
+          this.benchmarkMetrics.totalOrdersAssigned++;
+
           const vehicle = this.world.getVehicle(result.vehicleId);
           if (vehicle && order.status === 'pending') {
             // Update vehicle state
@@ -306,8 +336,11 @@ export class SimulationEngine {
             this.emitEvent('order', order.id, 'order.assigned', {
               vehicleId: vehicle.id,
               algorithm: result.route.algorithm,
+              strategy: result.strategyUsed,
               distanceM: result.route.distanceM,
               durationS: result.route.durationS,
+              nodesVisited: result.route.nodesVisited,
+              queryTimeMs: result.route.queryTimeMs,
             });
 
             this.emitEvent('vehicle', vehicle.id, 'vehicle.dispatched', {
@@ -409,8 +442,15 @@ export class SimulationEngine {
       const depot = this.world.getAllWarehouses().find((w) => w.id === vehicle.depotId);
       if (depot) {
         this.routingClient
-          .calculateRoute(vehicle.position, depot.position)
+          .calculateRoute(vehicle.position, depot.position, {
+            algorithm: this.activeRoutingAlgorithm,
+            metric: 'time',
+          })
           .then((returnRoute) => {
+            this.benchmarkMetrics.totalQueries++;
+            this.benchmarkMetrics.totalQueryTimeMs += returnRoute.queryTimeMs || 0;
+            this.benchmarkMetrics.totalNodesVisited += returnRoute.nodesVisited || 0;
+
             vehicle.status = 'returning';
             vehicle.routeGeometry = returnRoute.path;
             vehicle.routeProgress = 0;
@@ -510,6 +550,7 @@ export class SimulationEngine {
       warehouses: this.world.getAllWarehouses(),
       ecommerceBridge: this.ecommerceClient.getStatus(),
       trafficMultiplier: this.trafficMultiplier,
+      benchmarkStats: this.getBenchmarkStats(),
       stats: {
         activeVehicles: activeVehicles.length,
         totalOrders: orders.length,
@@ -519,6 +560,51 @@ export class SimulationEngine {
         avgDeliveryTimeMin: Math.round(avgDeliveryTimeMin * 10) / 10,
         totalDistanceKm: Math.round(totalDistanceKm * 10) / 10,
       },
+    };
+  }
+
+  public setAlgorithms(options: {
+    routingAlgorithm?: RoutingAlgorithm;
+    dispatchStrategy?: DispatchStrategy;
+  }): { routingAlgorithm: RoutingAlgorithm; dispatchStrategy: DispatchStrategy } {
+    if (options.routingAlgorithm) this.activeRoutingAlgorithm = options.routingAlgorithm;
+    if (options.dispatchStrategy) this.activeDispatchStrategy = options.dispatchStrategy;
+
+    this.emitEvent('simulation', this.simulationId, 'algorithm.updated', {
+      routingAlgorithm: this.activeRoutingAlgorithm,
+      dispatchStrategy: this.activeDispatchStrategy,
+    });
+
+    console.log(
+      `[SimulationEngine] Algorithms updated: routing=${this.activeRoutingAlgorithm}, dispatch=${this.activeDispatchStrategy}`
+    );
+
+    return {
+      routingAlgorithm: this.activeRoutingAlgorithm,
+      dispatchStrategy: this.activeDispatchStrategy,
+    };
+  }
+
+  public getBenchmarkStats(): AlgorithmBenchmarkStats {
+    const totalQueries = Math.max(1, this.benchmarkMetrics.totalQueries);
+    const avgQueryTimeMs =
+      Math.round((this.benchmarkMetrics.totalQueryTimeMs / totalQueries) * 1000) / 1000;
+    const avgNodesVisited =
+      Math.round((this.benchmarkMetrics.totalNodesVisited / totalQueries) * 10) / 10;
+    const totalDistanceDrivenKm = this.world
+      .getAllVehicles()
+      .reduce((sum, v) => sum + (v.routeDistanceM * v.routeProgress) / 1000, 0);
+
+    return {
+      routingAlgorithm: this.activeRoutingAlgorithm,
+      dispatchStrategy: this.activeDispatchStrategy,
+      totalQueries: this.benchmarkMetrics.totalQueries,
+      totalQueryTimeMs: Math.round(this.benchmarkMetrics.totalQueryTimeMs * 100) / 100,
+      avgQueryTimeMs,
+      totalNodesVisited: this.benchmarkMetrics.totalNodesVisited,
+      avgNodesVisited,
+      totalDistanceDrivenKm: Math.round(totalDistanceDrivenKm * 10) / 10,
+      totalOrdersAssigned: this.benchmarkMetrics.totalOrdersAssigned,
     };
   }
 

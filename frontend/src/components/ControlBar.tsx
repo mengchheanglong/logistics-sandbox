@@ -1,4 +1,4 @@
-import type { SpeedSetting, EcommerceBridgeStatus } from '../types';
+import type { SpeedSetting, EcommerceBridgeStatus, AlgorithmBenchmarkStats } from '../types';
 
 interface ControlBarProps {
   simTime: string;
@@ -6,12 +6,14 @@ interface ControlBarProps {
   status: 'running' | 'paused' | 'stopped';
   connected: boolean;
   ecommerceBridge?: EcommerceBridgeStatus;
+  benchmarkStats?: AlgorithmBenchmarkStats;
   onSpeedChange: (speed: SpeedSetting) => void;
   onPause: () => void;
   onResume: () => void;
   onStart: () => void;
   onStop: () => void;
   onOpenIncidents?: () => void;
+  onOpenBenchmark?: () => void;
 }
 
 const SPEEDS: { label: string; value: SpeedSetting }[] = [
@@ -22,8 +24,8 @@ const SPEEDS: { label: string; value: SpeedSetting }[] = [
 ];
 
 export function ControlBar({
-  simTime, speed, status, connected, ecommerceBridge,
-  onSpeedChange, onPause, onResume, onStart, onStop, onOpenIncidents,
+  simTime, speed, status, connected, ecommerceBridge, benchmarkStats,
+  onSpeedChange, onPause, onResume, onStart, onStop, onOpenIncidents, onOpenBenchmark,
 }: ControlBarProps) {
   return (
     <div className="control-bar">
@@ -32,6 +34,15 @@ export function ControlBar({
         <div className={`ws-indicator ${connected ? 'ws-connected' : 'ws-disconnected'}`}>
           {connected ? 'LIVE' : 'OFFLINE'}
         </div>
+        {benchmarkStats && (
+          <div
+            className="algo-indicator"
+            onClick={onOpenBenchmark}
+            title="Active routing & dispatch algorithms. Click to configure test bench."
+          >
+            ⚙️ {benchmarkStats.routingAlgorithm === 'contraction_hierarchies' ? 'CH' : benchmarkStats.routingAlgorithm.toUpperCase()} • {benchmarkStats.dispatchStrategy.replace(/_/g, ' ').toUpperCase()}
+          </div>
+        )}
         {ecommerceBridge && (
           <div
             className={`bridge-indicator ${ecommerceBridge.connected ? 'bridge-online' : 'bridge-standby'}`}
@@ -69,6 +80,12 @@ export function ControlBar({
       </div>
 
       <div className="controls-right">
+        {onOpenBenchmark && (
+          <button className="btn btn-secondary" onClick={onOpenBenchmark} title="Open Algorithm Test Bench & Analytics">
+            🧪 Test Bench
+          </button>
+        )}
+
         {onOpenIncidents && (
           <button className="btn btn-warning" onClick={onOpenIncidents} title="Open God's-eye incident injection panel">
             ⚡ Inject Incident
