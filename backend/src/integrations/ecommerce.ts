@@ -166,7 +166,6 @@ export class EcommerceClient {
       }
     }
 
-    if (!this.isAvailable) return true;
     try {
       const res = await fetch(`${this.baseUrl}/api/products/adjust-stock`, {
         method: 'POST',
@@ -174,6 +173,7 @@ export class EcommerceClient {
         body: JSON.stringify({ items }),
         signal: AbortSignal.timeout(2000),
       });
+      if (res.ok) this.isAvailable = true;
       return res.ok;
     } catch {
       return false;
@@ -249,15 +249,18 @@ export class EcommerceClient {
     status: 'Pending' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled',
     courierId?: string
   ): Promise<boolean> {
-    if (!this.isAvailable) return false;
     try {
       const res = await fetch(`${this.baseUrl}/api/orders/${orderId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, courier_id: courierId }),
-        signal: AbortSignal.timeout(2000),
+        signal: AbortSignal.timeout(2500),
       });
-      return res.ok;
+      if (res.ok) {
+        this.isAvailable = true;
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }
@@ -273,7 +276,6 @@ export class EcommerceClient {
     speedKmh: number,
     battery: number = 92
   ): Promise<boolean> {
-    if (!this.isAvailable) return false;
     try {
       const res = await fetch(`${this.baseUrl}/api/riders/ping`, {
         method: 'POST',

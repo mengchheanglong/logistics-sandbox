@@ -151,6 +151,13 @@ async function runTest() {
   const finalStock = finalProdRes.product?.stock;
   console.log(`✓ Final Verified MongoDB Stock for "${targetSku}": ${finalStock} units`);
 
+  // Restore simulation speed to normal 1x for interactive observation
+  await fetch(`${SANDBOX_BACKEND}/api/simulation/speed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ speed: 1 }),
+  });
+
   console.log('\n================================================================');
   console.log('🎉 ALL INTEGRATION TESTS PASSED!');
   console.log('   - Sandbox successfully pulls 51 live SKUs from E-Commerce');

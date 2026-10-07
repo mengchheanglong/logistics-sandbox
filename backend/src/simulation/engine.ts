@@ -250,13 +250,22 @@ export class SimulationEngine {
    * Ingest an order from the upstream ecommerce-hive-nosql marketplace into the sandbox.
    */
   public ingestEcommerceOrder(eOrder: EcommerceOrder): Order {
+    const existing = this.world.getOrder(eOrder.order_id);
+    if (existing) return existing;
+
+    // Ensure simulation is running at normal 1x speed so customer deliveries can be observed
+    if (!this.isRunning()) {
+      this.start();
+    }
+    if (this.clock.speed > 1) {
+      this.setSpeed(1);
+    }
+
     const depots = this.world.getAllWarehouses();
     const depot = depots.length > 0 ? depots[0] : { position: { lat: 11.568, lon: 104.922 } };
 
-    // Calculate delivery coordinate inside scenario bounds
-    const deliveryLocation = randomPointInBounds(this.world.getConfig().bounds, {
-      nextFloat: (min, max) => min + Math.random() * (max - min),
-    });
+    // Resolve realistic delivery coordinate based on destination address
+    const deliveryLocation = this.resolveDeliveryLocation(eOrder.delivery_address);
 
     const totalWeight = (eOrder.items || []).reduce((acc, item) => acc + (item.quantity || 1) * 2, 5);
 
@@ -282,8 +291,7 @@ export class SimulationEngine {
 
     this.world.addOrder(order);
     this.persistence.orders.saveOrder(order).catch(() => {});
-    this.dispatchQueue.push(order.id);
-    this.sortDispatchQueueByEDF();
+    this.dispatchQueue.unshift(order.id); // Place at top of queue for immediate dispatch
     this.ecommerceClient.recordOrderIngested();
 
     this.emitEvent('order', order.id, 'order.created', {
@@ -297,7 +305,42 @@ export class SimulationEngine {
     });
 
     console.log(`[SimulationEngine] Ingested marketplace order: ${order.id} for ${eOrder.customer_name} (Priority: ${order.priority})`);
+
+    // Trigger immediate non-blocking dispatch so order is assigned right away
+    this.dispatchPendingOrders();
+
     return order;
+  }
+
+  /**
+   * Resolve realistic geographical coordinates in Phnom Penh from delivery address text.
+   */
+  private resolveDeliveryLocation(address?: string): Coordinate {
+    const addr = (address || '').toLowerCase();
+    if (addr.includes('boeung tumpun') || addr.includes('meanchey') || addr.includes('271')) {
+      return { lat: 11.5305, lon: 104.9085 }; // South Phnom Penh / Street 271 area (~4.8 km)
+    }
+    if (addr.includes('pasteur') || addr.includes('bkk1') || addr.includes('keng kang')) {
+      return { lat: 11.5520, lon: 104.9248 }; // BKK1 / Pasteur (~2.2 km)
+    }
+    if (addr.includes('tuol kork') || addr.includes('tk')) {
+      return { lat: 11.5750, lon: 104.8970 }; // Tuol Kork (~3.6 km)
+    }
+    if (addr.includes('norodom') || addr.includes('tonle bassac') || addr.includes('bassac')) {
+      return { lat: 11.5450, lon: 104.9350 }; // Tonle Bassac (~3.2 km)
+    }
+    if (addr.includes('teuk thla') || addr.includes('sen sok') || addr.includes('russian federation')) {
+      return { lat: 11.5620, lon: 104.8780 }; // Sen Sok / Russian Blvd (~5.1 km)
+    }
+    if (addr.includes('chroy changvar') || addr.includes('ocic')) {
+      return { lat: 11.5950, lon: 104.9380 }; // Chroy Changvar (~4.6 km)
+    }
+    if (addr.includes('riverside') || addr.includes('daun penh') || addr.includes('wat phnom')) {
+      return { lat: 11.5750, lon: 104.9310 }; // Riverside (~1.8 km)
+    }
+    return randomPointInBounds(this.world.getConfig().bounds, {
+      nextFloat: (min, max) => min + Math.random() * (max - min),
+    });
   }
 
   /**
@@ -562,7 +605,8 @@ export class SimulationEngine {
             vehicle.routeGeometry = result.route.path;
             vehicle.routeProgress = 0;
             vehicle.routeDistanceM = result.route.distanceM;
-            vehicle.routeDurationS = result.route.durationS;
+            // Guarantee minimum observable duration (15s real-time at 1x) so operator can watch courier
+            vehicle.routeDurationS = Math.max(result.route.durationS, 900);
             vehicle.currentRouteId = `R-${order.id}`;
             vehicle.currentLoad_kg = order.totalWeight_kg;
             vehicle.trailHistory = [[vehicle.position.lon, vehicle.position.lat, this.clock.getSimulatedTime()]];

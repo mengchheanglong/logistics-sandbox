@@ -193,6 +193,22 @@ export function setupRoutes(engine: SimulationEngine): Router {
     });
   });
 
+  // Instant webhook push from upstream ecommerce-hive-nosql
+  router.post('/integrations/ecommerce/order', (req, res) => {
+    const eOrder = req.body;
+    if (!eOrder || !eOrder.order_id) {
+      res.status(400).json({ error: 'Valid order with order_id is required' });
+      return;
+    }
+    const order = engine.ingestEcommerceOrder(eOrder);
+    res.json({
+      success: true,
+      orderId: order.id,
+      status: order.status,
+      assignedVehicleId: order.assignedVehicleId,
+    });
+  });
+
   // Phase 3 Persistence Layer & Inventory Inspection Endpoints
   router.get('/persistence/status', (req, res) => {
     res.json(engine.persistence.getStatus());

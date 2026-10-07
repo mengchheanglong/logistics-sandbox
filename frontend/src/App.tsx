@@ -101,6 +101,41 @@ function ControlRoom() {
           timestamp: Date.now(),
         },
       ]);
+    } else if (event.eventType === 'order.created' && payload?.source === 'ecommerce-hive-nosql') {
+      setNotifications((prev) => [
+        ...prev,
+        {
+          id: event.eventId,
+          type: 'info',
+          title: `🛍️ New E-Commerce Order: ${event.entityId}`,
+          message: `${payload?.customerName || 'Customer'} placed order (${payload?.itemsCount || 1} items). Routing through Phnom Penh!`,
+          timestamp: Date.now(),
+        },
+      ]);
+    } else if (event.eventType === 'order.assigned' && payload?.vehicleId) {
+      // Auto-focus camera and open panel for the assigned courier
+      setSelectedVehicleId(payload.vehicleId);
+      setNotifications((prev) => [
+        ...prev,
+        {
+          id: event.eventId,
+          type: 'success',
+          title: `🚚 Courier Dispatched: ${event.entityId}`,
+          message: `Assigned to vehicle ${payload.vehicleId}. Live routing along OSM road network.`,
+          timestamp: Date.now(),
+        },
+      ]);
+    } else if (event.eventType === 'order.delivered') {
+      setNotifications((prev) => [
+        ...prev,
+        {
+          id: event.eventId,
+          type: 'success',
+          title: `✅ Order Delivered: ${event.entityId}`,
+          message: `Delivery completed by ${payload?.vehicleId || 'courier'}. E-Commerce marketplace updated.`,
+          timestamp: Date.now(),
+        },
+      ]);
     }
   }, []);
 
