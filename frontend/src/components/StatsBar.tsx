@@ -7,61 +7,38 @@ interface StatsBarProps {
 
 export function StatsBar({ stats, ecommerceBridge }: StatsBarProps) {
   return (
-    <div className="stats-bar">
-      <div className="stat-item">
-        <span className="stat-label">Active Vehicles</span>
-        <span className="stat-value mono-font">{stats.activeVehicles}</span>
-      </div>
-      <div className="stat-item">
-        <span className="stat-label">Delivered</span>
-        <span className="stat-value mono-font" style={{ color: 'var(--color-green)' }}>
-          {stats.deliveredOrders}
-        </span>
-      </div>
-      <div className="stat-item">
-        <span className="stat-label">Total Orders</span>
-        <span className="stat-value mono-font">{stats.totalOrders}</span>
-      </div>
-      <div className="stat-item">
-        <span className="stat-label">Pending</span>
-        <span className="stat-value mono-font" style={{ color: 'var(--color-blue)' }}>
-          {stats.pendingOrders}
-        </span>
-      </div>
-      <div className="stat-item">
-        <span className="stat-label">Late</span>
-        <span className="stat-value mono-font" style={{ color: 'var(--color-red)' }}>
-          {stats.lateOrders}
-        </span>
-      </div>
-      <div className="stat-item">
-        <span className="stat-label">Avg Delivery</span>
-        <span className="stat-value mono-font">
-          {stats.avgDeliveryTimeMin.toFixed(1)}<span className="stat-unit">min</span>
-        </span>
-      </div>
-      <div className="stat-item">
-        <span className="stat-label">Distance</span>
-        <span className="stat-value mono-font">
-          {stats.totalDistanceKm.toFixed(1)}<span className="stat-unit">km</span>
-        </span>
-      </div>
+    <footer className="flex items-center justify-around px-6 py-2 bg-ops-panel border-t border-ops-border text-xs z-10 select-none">
+      <StatItem label="Active Vehicles" value={stats.activeVehicles} />
+      <StatItem label="Delivered" value={stats.deliveredOrders} colorClass="text-ops-green" />
+      <StatItem label="Total Orders" value={stats.totalOrders} />
+      <StatItem label="Pending" value={stats.pendingOrders} colorClass="text-ops-blue" />
+      <StatItem label="Late" value={stats.lateOrders} colorClass="text-ops-red" />
+      <StatItem label="Avg Delivery" value={`${stats.avgDeliveryTimeMin.toFixed(1)} min`} />
+      <StatItem label="Distance" value={`${stats.totalDistanceKm.toFixed(1)} km`} />
       {ecommerceBridge && (
-        <div className="stat-item">
-          <span className="stat-label">Marketplace Ingest</span>
-          <span className="stat-value mono-font" style={{ color: 'var(--accent-cyan)' }}>
-            {ecommerceBridge.ordersIngestedCount}
-          </span>
-        </div>
+        <>
+          <StatItem label="Marketplace Ingest" value={ecommerceBridge.ordersIngestedCount} colorClass="text-ops-cyan" />
+          <StatItem label="Cassandra Pings" value={ecommerceBridge.telemetryPingsEmittedCount} colorClass="text-ops-teal" />
+        </>
       )}
-      {ecommerceBridge && (
-        <div className="stat-item">
-          <span className="stat-label">Cassandra Pings</span>
-          <span className="stat-value mono-font" style={{ color: 'var(--accent-teal)' }}>
-            {ecommerceBridge.telemetryPingsEmittedCount}
-          </span>
-        </div>
-      )}
+    </footer>
+  );
+}
+
+function StatItem({
+  label,
+  value,
+  colorClass = 'text-slate-200',
+}: {
+  label: string;
+  value: string | number;
+  colorClass?: string;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-medium">{label}</span>
+      <span className={`font-mono text-sm font-semibold ${colorClass}`}>{value}</span>
     </div>
   );
 }
+

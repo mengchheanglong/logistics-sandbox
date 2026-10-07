@@ -1,4 +1,17 @@
+@import "tailwindcss";
 @import 'maplibre-gl/dist/maplibre-gl.css';
+
+@theme {
+  --color-ops-bg: #0a0a0f;
+  --color-ops-panel: #151520;
+  --color-ops-border: #2c2c3e;
+  --color-ops-cyan: #00e5ff;
+  --color-ops-teal: #00bfa5;
+  --color-ops-green: #00e676;
+  --color-ops-blue: #2979ff;
+  --color-ops-orange: #ff9100;
+  --color-ops-red: #ff1744;
+}
 
 :root {
   --bg-dark: #0a0a0f;
