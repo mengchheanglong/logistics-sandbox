@@ -11,6 +11,7 @@ interface ControlBarProps {
   onResume: () => void;
   onStart: () => void;
   onStop: () => void;
+  onOpenIncidents?: () => void;
 }
 
 const SPEEDS: { label: string; value: SpeedSetting }[] = [
@@ -22,7 +23,7 @@ const SPEEDS: { label: string; value: SpeedSetting }[] = [
 
 export function ControlBar({
   simTime, speed, status, connected, ecommerceBridge,
-  onSpeedChange, onPause, onResume, onStart, onStop,
+  onSpeedChange, onPause, onResume, onStart, onStop, onOpenIncidents,
 }: ControlBarProps) {
   return (
     <div className="control-bar">
@@ -68,6 +69,12 @@ export function ControlBar({
       </div>
 
       <div className="controls-right">
+        {onOpenIncidents && (
+          <button className="btn btn-warning" onClick={onOpenIncidents} title="Open God's-eye incident injection panel">
+            ⚡ Inject Incident
+          </button>
+        )}
+
         <div className={`status-indicator status-${status}`}>
           <span className="status-dot" />
           {status.toUpperCase()}

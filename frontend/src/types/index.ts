@@ -51,6 +51,7 @@ export interface Warehouse {
   capacity: number;
   currentStock: number;
   type: 'warehouse' | 'depot';
+  status?: 'open' | 'closed';
 }
 
 export interface SimulationStats {
@@ -82,6 +83,7 @@ export interface SimulationState {
   warehouses: Warehouse[];
   stats: SimulationStats;
   ecommerceBridge?: EcommerceBridgeStatus;
+  trafficMultiplier?: number;
 }
 
 export interface SimulationEvent {

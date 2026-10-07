@@ -3,6 +3,7 @@ import type { Vehicle } from '../types';
 interface VehiclePanelProps {
   vehicle: Vehicle;
   onClose: () => void;
+  onInjectEvent?: (event: { type: string; targetId?: string; payload?: Record<string, unknown> }) => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -13,7 +14,7 @@ const STATUS_COLORS: Record<string, string> = {
   broken_down: 'var(--color-red)',
 };
 
-export function VehiclePanel({ vehicle, onClose }: VehiclePanelProps) {
+export function VehiclePanel({ vehicle, onClose, onInjectEvent }: VehiclePanelProps) {
   return (
     <div className="vehicle-panel">
       <div className="panel-header">
@@ -98,6 +99,27 @@ export function VehiclePanel({ vehicle, onClose }: VehiclePanelProps) {
               </span>
             )}
           </div>
+        </div>
+
+        <div className="detail-section">
+          <h3>Operator Intervention</h3>
+          {vehicle.status === 'broken_down' ? (
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%' }}
+              onClick={() => onInjectEvent?.({ type: 'vehicle_recover', targetId: vehicle.id })}
+            >
+              🛠️ Repair & Recover Vehicle
+            </button>
+          ) : (
+            <button
+              className="btn btn-danger"
+              style={{ width: '100%' }}
+              onClick={() => onInjectEvent?.({ type: 'vehicle_breakdown', targetId: vehicle.id })}
+            >
+              💥 Trigger Breakdown
+            </button>
+          )}
         </div>
       </div>
     </div>

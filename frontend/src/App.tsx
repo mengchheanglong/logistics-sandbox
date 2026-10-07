@@ -3,6 +3,7 @@ import { MapView } from './components/MapView';
 import { ControlBar } from './components/ControlBar';
 import { StatsBar } from './components/StatsBar';
 import { VehiclePanel } from './components/VehiclePanel';
+import { IncidentPanel } from './components/IncidentPanel';
 import { useSimulation } from './hooks/useSimulation';
 import { useWebSocket } from './hooks/useWebSocket';
 import type { SimulationState, SimulationEvent, Vehicle } from './types';
@@ -21,6 +22,7 @@ export default function App() {
   } = useSimulation();
 
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+  const [incidentModalOpen, setIncidentModalOpen] = useState<boolean>(false);
 
   const handleStateUpdate = useCallback(
     (newState: SimulationState) => {
@@ -30,8 +32,32 @@ export default function App() {
   );
 
   const handleEvent = useCallback((_event: SimulationEvent) => {
-    // Future: show event toast notifications
+    // Live domain event updates
   }, []);
+
+  const handleInjectIncident = async (event: {
+    type: string;
+    targetId?: string;
+    payload?: Record<string, unknown>;
+  }): Promise<{ success: boolean; message: string }> => {
+    try {
+      const res = await fetch('/api/events/inject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(event),
+      });
+      const data = await res.json();
+      return {
+        success: data.success !== false,
+        message: data.message || 'Incident successfully injected.',
+      };
+    } catch (err) {
+      return {
+        success: false,
+        message: (err as Error).message,
+      };
+    }
+  };
 
   // Connect WebSocket — use relative URL so Vite proxy handles it
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -75,6 +101,7 @@ export default function App() {
         onResume={resumeSimulation}
         onStart={startSimulation}
         onStop={stopSimulation}
+        onOpenIncidents={() => setIncidentModalOpen(true)}
       />
 
       <div className="main-content">
@@ -89,11 +116,21 @@ export default function App() {
           <VehiclePanel
             vehicle={selectedVehicle}
             onClose={() => setSelectedVehicleId(null)}
+            onInjectEvent={handleInjectIncident}
           />
         )}
       </div>
 
       <StatsBar stats={state.stats} ecommerceBridge={state.ecommerceBridge} />
+
+      <IncidentPanel
+        vehicles={vehicles}
+        warehouses={warehouses}
+        currentTrafficMultiplier={state.trafficMultiplier}
+        isOpen={incidentModalOpen}
+        onClose={() => setIncidentModalOpen(false)}
+        onInject={handleInjectIncident}
+      />
     </div>
   );
 }

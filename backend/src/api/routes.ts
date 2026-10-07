@@ -68,8 +68,8 @@ export function setupRoutes(engine: SimulationEngine): Router {
   });
 
   router.post('/events/inject', (req, res) => {
-    engine.injectEvent(req.body);
-    res.json({ status: 'event_injected' });
+    const result = engine.injectEvent(req.body);
+    res.json({ status: 'event_injected', ...result });
   });
 
   router.get('/scenarios', (req, res) => {

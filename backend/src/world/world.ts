@@ -60,6 +60,7 @@ export class World {
         capacity: 10000,
         currentStock: 5000,
         type: 'depot',
+        status: 'open',
       });
     }
 
@@ -157,8 +158,9 @@ export class World {
     // Random delivery location within bounds
     const deliveryLocation = randomPointInBounds(this.config.bounds, this.rng);
 
-    // Pickup from a random depot
-    const depotList = Array.from(this.warehouses.values());
+    // Pickup from an open depot
+    const openDepots = Array.from(this.warehouses.values()).filter(w => w.status !== 'closed');
+    const depotList = openDepots.length > 0 ? openDepots : Array.from(this.warehouses.values());
     const depot = this.rng.pick(depotList);
 
     // Create customer if not exists

@@ -368,6 +368,217 @@ body {
   overflow-y: auto;
 }
 
+/* Button warning */
+.btn-warning {
+  background: var(--color-orange);
+  color: var(--bg-dark);
+  border-color: var(--color-orange);
+}
+.btn-warning:hover {
+  background: #e67e00;
+}
+
+/* Incident Modal */
+.incident-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 100;
+}
+
+.incident-modal {
+  width: 580px;
+  max-width: 95vw;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.incident-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.incident-icon {
+  font-size: 1.25rem;
+  color: var(--color-orange);
+}
+
+.incident-header h2 {
+  font-size: 1.1rem;
+  color: var(--text-light);
+}
+
+.incident-tabs {
+  display: flex;
+  background: var(--bg-dark);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.incident-tab {
+  flex: 1;
+  padding: 0.75rem 0.5rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.incident-tab:hover {
+  color: var(--text-light);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.incident-tab.active {
+  color: var(--accent-cyan);
+  border-bottom-color: var(--accent-cyan);
+  background: rgba(0, 229, 255, 0.05);
+}
+
+.incident-body {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.incident-feedback {
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.feedback-success {
+  background: rgba(0, 230, 118, 0.15);
+  color: var(--color-green);
+  border: 1px solid var(--color-green);
+}
+
+.feedback-error {
+  background: rgba(255, 23, 68, 0.15);
+  color: var(--color-red);
+  border: 1px solid var(--color-red);
+}
+
+.tab-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.pane-desc {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-group label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.incident-select {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-color);
+  color: var(--text-light);
+  border-radius: 4px;
+  font-size: 0.9rem;
+  outline: none;
+}
+.incident-select:focus {
+  border-color: var(--accent-cyan);
+}
+
+.target-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: var(--text-light);
+}
+
+.pill-group {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+}
+
+.pill-btn {
+  padding: 0.6rem 0.4rem;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-color);
+  color: var(--text-light);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.pill-btn:hover {
+  border-color: var(--text-dim);
+}
+
+.pill-btn.active {
+  background: rgba(0, 229, 255, 0.15);
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+
+.action-buttons {
+  margin-top: 0.5rem;
+}
+
+.action-buttons .btn {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

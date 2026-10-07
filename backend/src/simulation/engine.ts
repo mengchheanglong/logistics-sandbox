@@ -53,6 +53,8 @@ export class SimulationEngine {
   private dispatchQueue: string[] = [];
   /** Whether a dispatch operation is currently in progress */
   private dispatching: boolean = false;
+  /** Global traffic congestion factor (1.0 = normal, 2.0 = heavy traffic) */
+  private trafficMultiplier: number = 1.0;
 
   constructor() {
     this.simulationId = uuidv4();
@@ -347,13 +349,15 @@ export class SimulationEngine {
     const deltaSimMs = deltaRealMs * this.clock.speed * 60;
     const deltaSimS = deltaSimMs / 1000;
 
-    const progressIncrement = deltaSimS / vehicle.routeDurationS;
+    // Traffic congestion slows down effective vehicle progress
+    const effectiveSpeedFactor = 1 / Math.max(0.2, this.trafficMultiplier);
+    const progressIncrement = (deltaSimS / vehicle.routeDurationS) * effectiveSpeedFactor;
     vehicle.routeProgress = Math.min(1, vehicle.routeProgress + progressIncrement);
 
     // Interpolate position along the route polyline
     const newPosition = interpolateAlongPath(vehicle.routeGeometry, vehicle.routeProgress);
     vehicle.position = newPosition;
-    vehicle.speed_kmh = (vehicle.routeDistanceM / vehicle.routeDurationS) * 3.6;
+    vehicle.speed_kmh = (vehicle.routeDistanceM / vehicle.routeDurationS) * 3.6 * effectiveSpeedFactor;
 
     // Emit position update event & stream Cassandra ping to ecommerce-hive-nosql (throttled)
     if (Math.random() < 0.1) {
@@ -505,6 +509,7 @@ export class SimulationEngine {
       orders,
       warehouses: this.world.getAllWarehouses(),
       ecommerceBridge: this.ecommerceClient.getStatus(),
+      trafficMultiplier: this.trafficMultiplier,
       stats: {
         activeVehicles: activeVehicles.length,
         totalOrders: orders.length,
@@ -517,21 +522,110 @@ export class SimulationEngine {
     };
   }
 
-  public injectEvent(event: { type: string; targetId?: string; payload?: Record<string, unknown> }): void {
+  public injectEvent(event: { type: string; targetId?: string; payload?: Record<string, unknown> }): { success: boolean; message: string } {
     switch (event.type) {
       case 'vehicle_breakdown': {
         const vehicle = event.targetId ? this.world.getVehicle(event.targetId) : undefined;
-        if (vehicle) {
-          vehicle.status = 'broken_down';
-          vehicle.speed_kmh = 0;
-          this.emitEvent('vehicle', vehicle.id, 'vehicle.failed', {
-            reason: 'operator_intervention',
-          });
+        if (!vehicle) return { success: false, message: 'Vehicle not found' };
+
+        vehicle.status = 'broken_down';
+        vehicle.speed_kmh = 0;
+
+        // Reassign in-transit orders back to pending
+        let reallocated = 0;
+        if (vehicle.assignedOrderIds.length > 0) {
+          for (const orderId of vehicle.assignedOrderIds) {
+            const order = this.world.getOrder(orderId);
+            if (order && order.status !== 'delivered') {
+              order.status = 'pending';
+              order.assignedVehicleId = null;
+              this.dispatchQueue.unshift(order.id);
+              reallocated++;
+            }
+          }
+          vehicle.assignedOrderIds = [];
         }
-        break;
+
+        this.emitEvent('vehicle', vehicle.id, 'vehicle.failed', {
+          reason: 'operator_intervention',
+          reallocatedOrders: reallocated,
+        });
+        return { success: true, message: `Vehicle ${vehicle.id} broke down. ${reallocated} orders returned to queue.` };
       }
+
+      case 'vehicle_recover': {
+        const vehicle = event.targetId ? this.world.getVehicle(event.targetId) : undefined;
+        if (!vehicle) return { success: false, message: 'Vehicle not found' };
+
+        this.resetVehicleToIdle(vehicle);
+        this.emitEvent('vehicle', vehicle.id, 'vehicle.recovered', {
+          reason: 'operator_intervention',
+        });
+        return { success: true, message: `Vehicle ${vehicle.id} repaired and back in service.` };
+      }
+
+      case 'depot_closure': {
+        const depotId = event.targetId;
+        const depot = this.world.getAllWarehouses().find((w) => w.id === depotId);
+        if (!depot) return { success: false, message: 'Depot not found' };
+
+        depot.status = 'closed';
+
+        // Re-home stationed idle vehicles to another open depot
+        const openDepot = this.world.getAllWarehouses().find((w) => w.id !== depotId && w.status !== 'closed');
+        let rehomed = 0;
+        if (openDepot) {
+          for (const v of this.world.getAllVehicles()) {
+            if (v.depotId === depotId && v.status === 'idle') {
+              v.depotId = openDepot.id;
+              rehomed++;
+            }
+          }
+        }
+
+        this.emitEvent('depot', depot.id, 'depot.closed', {
+          reason: event.payload?.reason || 'emergency_flooding',
+          rehomedVehicles: rehomed,
+        });
+        return { success: true, message: `Depot ${depot.name} (${depot.id}) closed. ${rehomed} vehicles transferred.` };
+      }
+
+      case 'depot_reopen': {
+        const depotId = event.targetId;
+        const depot = this.world.getAllWarehouses().find((w) => w.id === depotId);
+        if (!depot) return { success: false, message: 'Depot not found' };
+
+        depot.status = 'open';
+        this.emitEvent('depot', depot.id, 'depot.reopened', {});
+        return { success: true, message: `Depot ${depot.name} reopened.` };
+      }
+
+      case 'demand_spike': {
+        const count = Number(event.payload?.count) || 20;
+        const simTime = this.clock.getSimulatedTime();
+        for (let i = 0; i < count; i++) {
+          const order = this.world.generateOrder(simTime);
+          this.ordersGenerated++;
+          this.dispatchQueue.push(order.id);
+        }
+        this.emitEvent('simulation', this.simulationId, 'demand.spike', {
+          ordersInjected: count,
+        });
+        return { success: true, message: `Demand spike: injected ${count} urgent orders.` };
+      }
+
+      case 'traffic_congestion': {
+        const factor = Number(event.payload?.multiplier) || 2.0;
+        this.trafficMultiplier = factor;
+        this.emitEvent('traffic', 'city_network', 'traffic.changed', {
+          multiplier: factor,
+        });
+        return { success: true, message: `Traffic congestion set to ${factor.toFixed(1)}x slowdown.` };
+      }
+
       default:
         console.log(`[SimulationEngine] Unknown injection event type: ${event.type}`);
+        return { success: false, message: `Unknown event type: ${event.type}` };
     }
   }
 }
