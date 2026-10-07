@@ -1,10 +1,34 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import Map from 'react-map-gl/maplibre';
 import { DeckGL } from '@deck.gl/react';
 import { ScatterplotLayer, PathLayer, TextLayer } from '@deck.gl/layers';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
 import type { Vehicle, Warehouse, RoadIncident, Order } from '../types';
 import 'maplibre-gl/dist/maplibre-gl.css';
+
+/**
+ * Calculates forward azimuth bearing (degrees 0-360) between two coordinates.
+ */
+export function calculateBearing(
+  startLat: number,
+  startLon: number,
+  endLat: number,
+  endLon: number
+): number {
+  const startLatRad = (startLat * Math.PI) / 180;
+  const startLonRad = (startLon * Math.PI) / 180;
+  const endLatRad = (endLat * Math.PI) / 180;
+  const endLonRad = (endLon * Math.PI) / 180;
+
+  const dLon = endLonRad - startLonRad;
+  const y = Math.sin(dLon) * Math.cos(endLatRad);
+  const x =
+    Math.cos(startLatRad) * Math.sin(endLatRad) -
+    Math.sin(startLatRad) * Math.cos(endLatRad) * Math.cos(dLon);
+
+  const bearing = (Math.atan2(y, x) * 180) / Math.PI;
+  return (bearing + 360) % 360;
+}
 
 const DEFAULT_CENTER = {
   longitude: 104.9282,
@@ -94,6 +118,8 @@ interface MapViewProps {
   showOrders?: boolean;
   showLegend?: boolean;
   onToggleLegend?: () => void;
+  chaseMode?: boolean;
+  onToggleChaseMode?: () => void;
 }
 
 export function MapView({
@@ -109,10 +135,41 @@ export function MapView({
   showOrders = true,
   showLegend = true,
   onToggleLegend,
+  chaseMode = false,
+  onToggleChaseMode,
 }: MapViewProps) {
   const [viewState, setViewState] = useState(DEFAULT_CENTER);
   const [mapTheme, setMapTheme] = useState<'dark' | 'liberty'>('dark');
   const [legendCollapsed, setLegendCollapsed] = useState<boolean>(false);
+
+  // 3D Chase Cam Tracker: lock camera to vehicle position and align bearing with heading
+  useEffect(() => {
+    if (!chaseMode || !selectedVehicleId) return;
+
+    const targetVehicle = vehicles.find((v) => v.id === selectedVehicleId);
+    if (!targetVehicle) return;
+
+    let targetBearing: number | null = null;
+    const history = targetVehicle.trailHistory || [];
+    if (history.length >= 2) {
+      const pPrev = history[history.length - 2];
+      const pCurr = history[history.length - 1];
+      targetBearing = calculateBearing(pPrev[1], pPrev[0], pCurr[1], pCurr[0]);
+    } else if (targetVehicle.routeGeometry && targetVehicle.routeGeometry.length >= 2) {
+      const p0 = targetVehicle.routeGeometry[0];
+      const p1 = targetVehicle.routeGeometry[1];
+      targetBearing = calculateBearing(p0[1], p0[0], p1[1], p1[0]);
+    }
+
+    setViewState((prev) => ({
+      ...prev,
+      longitude: targetVehicle.position.lon,
+      latitude: targetVehicle.position.lat,
+      zoom: Math.max(prev.zoom, 16.5),
+      pitch: 52,
+      bearing: targetBearing !== null && !isNaN(targetBearing) ? targetBearing : prev.bearing,
+    }));
+  }, [chaseMode, selectedVehicleId, vehicles]);
 
   // Interactive Map Navigation Controls
   const handleZoomIn = () => setViewState((prev) => ({ ...prev, zoom: Math.min(18, prev.zoom + 1) }));
@@ -571,6 +628,8 @@ export function MapView({
     onVehicleClick,
   ]);
 
+  const selectedVehicle = selectedVehicleId ? vehicles.find((v) => v.id === selectedVehicleId) : null;
+
   return (
     <div className="map-container relative flex-1 h-full w-full">
       <DeckGL
@@ -583,6 +642,31 @@ export function MapView({
       >
         <Map mapStyle={MAP_STYLES[mapTheme]} />
       </DeckGL>
+
+      {/* 3D Chase Camera Active Tracker Banner */}
+      {chaseMode && selectedVehicle && (
+        <div className="absolute top-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 bg-slate-950/92 backdrop-blur-md px-4 py-2 rounded-full border border-cyan-400/60 shadow-[0_0_25px_rgba(0,240,255,0.35)] text-xs font-mono select-none animate-in fade-in zoom-in-95 duration-150">
+          <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
+          <span className="font-bold text-cyan-300">
+            CHASE CAM: {selectedVehicle.name} ({selectedVehicle.id})
+          </span>
+          <span className="text-slate-600">|</span>
+          <span className="text-sky-300 font-bold">{selectedVehicle.speed_kmh.toFixed(0)} KM/H</span>
+          <span className="text-slate-600">|</span>
+          <span className={`font-bold ${FLEET_STATUS_PALETTE[selectedVehicle.status]?.hex || 'text-cyan-400'}`}>
+            {selectedVehicle.status.replace(/_/g, ' ').toUpperCase()}
+          </span>
+          {onToggleChaseMode && (
+            <button
+              onClick={onToggleChaseMode}
+              className="ml-2 px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/40 text-[10px] font-bold cursor-pointer transition-colors"
+              title="Exit Chase Camera (Esc)"
+            >
+              EXIT (ESC)
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Floating Ops Map HUD Controls */}
       <div className="absolute bottom-5 right-5 z-20 flex flex-col gap-1.5 bg-slate-950/85 backdrop-blur-md p-1.5 rounded-lg border border-slate-800 shadow-2xl text-xs select-none">
@@ -617,6 +701,19 @@ export function MapView({
         >
           {viewState.pitch > 0 ? '3D' : '2D'}
         </button>
+        {selectedVehicleId && onToggleChaseMode && (
+          <button
+            onClick={onToggleChaseMode}
+            className={`w-8 h-8 flex items-center justify-center rounded text-sm transition-colors cursor-pointer ${
+              chaseMode
+                ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.4)] animate-pulse'
+                : 'bg-slate-900/90 text-slate-400 hover:text-cyan-300 hover:bg-slate-800'
+            }`}
+            title={chaseMode ? 'Exit 3D Chase Camera' : `Engage 3D Chase Cam for ${selectedVehicleId}`}
+          >
+            🎥
+          </button>
+        )}
         <button
           onClick={handleToggleTheme}
           className="w-8 h-8 flex items-center justify-center rounded bg-slate-900/90 text-amber-400 hover:text-amber-300 hover:bg-slate-800 transition-colors text-sm cursor-pointer"

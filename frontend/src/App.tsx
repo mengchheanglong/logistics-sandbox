@@ -5,6 +5,7 @@ import { StatsBar } from './components/StatsBar';
 import { VehiclePanel } from './components/VehiclePanel';
 import { IncidentPanel } from './components/IncidentPanel';
 import { BenchmarkModal } from './components/BenchmarkModal';
+import { AnalyticsDrawer, AnalyticsTelemetryPoint } from './components/AnalyticsDrawer';
 import { NotificationToast, NotificationItem } from './components/NotificationToast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useSimulation } from './hooks/useSimulation';
@@ -35,13 +36,16 @@ function ControlRoom() {
   } = useSimulation();
 
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+  const [chaseMode, setChaseMode] = useState<boolean>(false);
   const [incidentModalOpen, setIncidentModalOpen] = useState<boolean>(false);
   const [benchmarkModalOpen, setBenchmarkModalOpen] = useState<boolean>(false);
+  const [analyticsOpen, setAnalyticsOpen] = useState<boolean>(false);
   const [showTrails, setShowTrails] = useState<boolean>(true);
   const [showHeatmap, setShowHeatmap] = useState<boolean>(false);
   const [showOrders, setShowOrders] = useState<boolean>(true);
   const [showLegend, setShowLegend] = useState<boolean>(true);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [telemetryHistory, setTelemetryHistory] = useState<AnalyticsTelemetryPoint[]>([]);
 
   const handleStateUpdate = useCallback(
     (newState: SimulationState) => {
@@ -104,6 +108,43 @@ function ControlRoom() {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   }, []);
 
+  // Buffer real-time telemetry stream for analytics charts (up to 40 data points)
+  useEffect(() => {
+    if (!state) return;
+    const simSeconds = Math.floor(state.simTime / 1000);
+    const formatted = `${String(Math.floor(simSeconds / 3600) % 24).padStart(2, '0')}:${String(
+      Math.floor((simSeconds % 3600) / 60)
+    ).padStart(2, '0')}:${String(simSeconds % 60).padStart(2, '0')}`;
+
+    const totalVehicles = state.vehicles?.length || 30;
+    const activeVehicles = state.stats?.activeVehicles || 0;
+    const utilRate = Math.round((activeVehicles / (totalVehicles || 1)) * 100);
+
+    const point: AnalyticsTelemetryPoint = {
+      simTime: state.simTime,
+      timeFormatted: formatted,
+      activeVehicles,
+      totalVehicles,
+      utilizationRate: utilRate,
+      deliveredOrders: state.stats?.deliveredOrders || 0,
+      pendingOrders: state.stats?.pendingOrders || 0,
+      slaComplianceRate: state.stats?.slaComplianceRate ?? 100,
+      atRiskOrders: state.stats?.atRiskOrdersCount || 0,
+      breachedOrders: state.stats?.lateOrders || 0,
+      avgSpeedKmh: state.vehicles?.length
+        ? state.vehicles.reduce((acc, v) => acc + v.speed_kmh, 0) / state.vehicles.length
+        : 0,
+      trafficMultiplier: state.trafficMultiplier || 1.0,
+    };
+
+    setTelemetryHistory((prev) => {
+      // Append if simTime changed or initial
+      if (prev.length > 0 && prev[prev.length - 1].simTime === state.simTime) return prev;
+      const next = [...prev, point];
+      return next.length > 40 ? next.slice(next.length - 40) : next;
+    });
+  }, [state?.simTime, state?.stats?.deliveredOrders, state?.stats?.activeVehicles]);
+
   // Keyboard Shortcuts for Mission Control
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -124,16 +165,26 @@ function ControlRoom() {
         setShowOrders((prev) => !prev);
       } else if (e.key === 'l' || e.key === 'L') {
         setShowLegend((prev) => !prev);
+      } else if (e.key === 'a' || e.key === 'A') {
+        setAnalyticsOpen((prev) => !prev);
+      } else if (e.key === 'c' || e.key === 'C') {
+        if (selectedVehicleId) setChaseMode((prev) => !prev);
       } else if (e.key === 'Escape') {
-        setSelectedVehicleId(null);
-        setIncidentModalOpen(false);
-        setBenchmarkModalOpen(false);
+        if (chaseMode) {
+          setChaseMode(false);
+        } else if (analyticsOpen) {
+          setAnalyticsOpen(false);
+        } else {
+          setSelectedVehicleId(null);
+          setIncidentModalOpen(false);
+          setBenchmarkModalOpen(false);
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [state?.status, pauseSimulation, resumeSimulation]);
+  }, [state?.status, pauseSimulation, resumeSimulation, chaseMode, analyticsOpen, selectedVehicleId]);
 
   const handleInjectIncident = async (event: {
     type: string;
@@ -225,6 +276,7 @@ function ControlRoom() {
         onToggleHeatmap={() => setShowHeatmap((prev) => !prev)}
         onToggleOrders={() => setShowOrders((prev) => !prev)}
         onToggleLegend={() => setShowLegend((prev) => !prev)}
+        onOpenAnalytics={() => setAnalyticsOpen(true)}
         onOpenIncidents={() => setIncidentModalOpen(true)}
         onOpenBenchmark={() => setBenchmarkModalOpen(true)}
       />
@@ -243,6 +295,8 @@ function ControlRoom() {
           showOrders={showOrders}
           showLegend={showLegend}
           onToggleLegend={() => setShowLegend((prev) => !prev)}
+          chaseMode={chaseMode}
+          onToggleChaseMode={() => setChaseMode((prev) => !prev)}
         />
 
         {selectedVehicle && (
@@ -250,13 +304,29 @@ function ControlRoom() {
             vehicle={selectedVehicle}
             orders={state.orders || []}
             simTime={state.simTime}
-            onClose={() => setSelectedVehicleId(null)}
+            onClose={() => {
+              setSelectedVehicleId(null);
+              setChaseMode(false);
+            }}
             onInjectEvent={handleInjectIncident}
+            isChaseMode={chaseMode}
+            onToggleChaseMode={() => setChaseMode((prev) => !prev)}
           />
         )}
       </div>
 
       <StatsBar stats={state.stats} ecommerceBridge={state.ecommerceBridge} />
+
+      <AnalyticsDrawer
+        isOpen={analyticsOpen}
+        onClose={() => setAnalyticsOpen(false)}
+        history={telemetryHistory}
+        currentStats={state.stats}
+        currentTrafficMultiplier={state.trafficMultiplier || 1.0}
+        activeRoutingAlgorithm={state.benchmarkStats?.routingAlgorithm}
+        activeDispatchStrategy={state.benchmarkStats?.dispatchStrategy}
+        totalVehiclesCount={vehicles.length}
+      />
 
       <IncidentPanel
         vehicles={vehicles}

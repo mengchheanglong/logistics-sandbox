@@ -23,6 +23,7 @@ interface ControlBarProps {
   onToggleHeatmap?: () => void;
   onToggleOrders?: () => void;
   onToggleLegend?: () => void;
+  onOpenAnalytics?: () => void;
   onOpenIncidents?: () => void;
   onOpenBenchmark?: () => void;
 }
@@ -57,6 +58,7 @@ export function ControlBar({
   onToggleHeatmap,
   onToggleOrders,
   onToggleLegend,
+  onOpenAnalytics,
   onOpenIncidents,
   onOpenBenchmark,
 }: ControlBarProps) {
@@ -275,6 +277,16 @@ export function ControlBar({
             title="Open Incident Injection Panel"
           >
             <span className="leading-none">⚡</span> Incident
+          </button>
+        )}
+
+        {onOpenAnalytics && (
+          <button
+            onClick={onOpenAnalytics}
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-cyan-950/60 text-cyan-300 border border-cyan-600/50 hover:bg-cyan-900/60 hover:border-cyan-400 whitespace-nowrap transition-all cursor-pointer shadow-[0_0_10px_rgba(0,240,255,0.15)]"
+            title="Open Real-Time Fleet Performance Analytics HUD"
+          >
+            <span className="leading-none">📊</span> Analytics
           </button>
         )}
 

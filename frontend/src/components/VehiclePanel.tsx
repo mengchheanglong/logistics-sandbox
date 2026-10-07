@@ -6,9 +6,19 @@ interface VehiclePanelProps {
   simTime?: number;
   onClose: () => void;
   onInjectEvent?: (event: { type: string; targetId?: string; payload?: Record<string, unknown> }) => void;
+  isChaseMode?: boolean;
+  onToggleChaseMode?: () => void;
 }
 
-export function VehiclePanel({ vehicle, orders = [], simTime = 0, onClose, onInjectEvent }: VehiclePanelProps) {
+export function VehiclePanel({
+  vehicle,
+  orders = [],
+  simTime = 0,
+  onClose,
+  onInjectEvent,
+  isChaseMode = false,
+  onToggleChaseMode,
+}: VehiclePanelProps) {
   const loadPercent = Math.min(100, Math.round((vehicle.currentLoad_kg / (vehicle.capacity_kg || 1)) * 100));
   const progressPercent = Math.min(100, Math.round(vehicle.routeProgress * 100));
 
@@ -92,6 +102,21 @@ export function VehiclePanel({ vehicle, orders = [], simTime = 0, onClose, onInj
               />
             </div>
           </div>
+
+          {/* 3D Chase Camera Toggle Button */}
+          {onToggleChaseMode && (
+            <button
+              onClick={onToggleChaseMode}
+              className={`w-full py-2 px-3 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border ${
+                isChaseMode
+                  ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400 shadow-[0_0_15px_rgba(0,240,255,0.4)] animate-pulse'
+                  : 'bg-slate-950/80 hover:bg-slate-800 text-cyan-400 border-cyan-500/40 hover:border-cyan-400'
+              }`}
+            >
+              <span>🎥</span>
+              <span>{isChaseMode ? 'EXIT 3D CHASE CAM' : 'ENGAGE 3D CHASE CAM'}</span>
+            </button>
+          )}
         </div>
 
         {/* Route / Tour Progress */}
