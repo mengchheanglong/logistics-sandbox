@@ -274,7 +274,9 @@ export class EcommerceClient {
     riderId: string,
     pos: Coordinate,
     speedKmh: number,
-    battery: number = 92
+    battery: number = 92,
+    status?: string,
+    driverName?: string
   ): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/api/riders/ping`, {
@@ -286,6 +288,9 @@ export class EcommerceClient {
           lng: pos.lon,
           speed: `${speedKmh.toFixed(1)} km/h`,
           battery: Math.round(battery),
+          status: status || 'Delivering',
+          name: driverName || `Driver ${riderId}`,
+          city: 'Phnom Penh',
         }),
         signal: AbortSignal.timeout(1000),
       });

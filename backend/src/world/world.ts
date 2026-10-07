@@ -112,6 +112,7 @@ export class World {
         type: vehicleType,
         status: 'idle',
         driverId,
+        driverName,
         position: {
           lat: depot.position.lat + offsetLat,
           lon: depot.position.lon + offsetLon,

@@ -744,7 +744,15 @@ export class SimulationEngine {
       this.persistence.vehicles.saveVehicleState(vehicle).catch(() => {});
 
       // Stream GPS ping to Cassandra via upstream ecommerce API
-      this.ecommerceClient.sendRiderPing(vehicle.driverId, newPosition, vehicle.speed_kmh);
+      const driver = this.world.getDriver(vehicle.driverId);
+      this.ecommerceClient.sendRiderPing(
+        vehicle.driverId,
+        newPosition,
+        vehicle.speed_kmh,
+        92,
+        vehicle.status,
+        driver?.name || vehicle.driverName
+      );
     }
 
     // Check if vehicle reached destination

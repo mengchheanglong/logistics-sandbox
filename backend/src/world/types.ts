@@ -13,6 +13,7 @@ export interface Vehicle {
   type: 'truck' | 'van' | 'motorcycle';
   status: 'idle' | 'en_route' | 'delivering' | 'returning' | 'broken_down';
   driverId: string;
+  driverName?: string;
   position: Coordinate;
   speed_kmh: number;
   capacity_kg: number;
