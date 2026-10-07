@@ -53,108 +53,118 @@ export function ControlBar({
   onOpenBenchmark,
 }: ControlBarProps) {
   const defaultPresets = [
-    { id: 'morning_delivery', name: 'Phnom Penh Morning Delivery' },
-    { id: 'depot_stress_test', name: 'Depot Flooding Stress Test' },
-    { id: 'express_rush_hour', name: 'Express Rush-Hour Blitz' },
+    { id: 'morning_delivery', name: 'Morning Delivery' },
+    { id: 'depot_stress_test', name: 'Depot Stress Test' },
+    { id: 'express_rush_hour', name: 'Express Rush-Hour' },
   ];
 
   const availableScenarios = scenarios.length > 0 ? scenarios : defaultPresets;
 
-  return (
-    <div className="control-bar flex items-center justify-between px-5 py-2.5 bg-ops-panel border-b border-ops-border select-none z-20">
-      <div className="controls-left flex items-center gap-3">
-        <h1 className="text-base font-bold text-ops-cyan tracking-wide flex items-center gap-1.5">
-          <span>🌐</span> Logistics Sandbox
-        </h1>
+  const algoShort =
+    benchmarkStats?.routingAlgorithm === 'contraction_hierarchies'
+      ? 'CH'
+      : benchmarkStats?.routingAlgorithm === 'bidirectional_astar'
+      ? 'Bi-A*'
+      : benchmarkStats?.routingAlgorithm?.toUpperCase() || 'CH';
 
-        <div className={`ws-indicator text-[11px] font-mono px-2 py-0.5 rounded font-bold ${connected ? 'ws-connected text-emerald-400 bg-emerald-950/60 border border-emerald-500/40' : 'ws-disconnected text-rose-400 bg-rose-950/60 border border-rose-500/40'}`}>
-          {connected ? 'LIVE' : 'OFFLINE'}
+  const strategyShort =
+    benchmarkStats?.dispatchStrategy === 'multi_stop_tour'
+      ? 'Tour'
+      : benchmarkStats?.dispatchStrategy === 'cluster_zone'
+      ? 'Cluster'
+      : benchmarkStats?.dispatchStrategy === 'route_aware'
+      ? 'Route'
+      : 'Nearest';
+
+  return (
+    <header className="h-14 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/90 px-4 flex items-center justify-between select-none z-20 gap-3 text-xs overflow-x-auto">
+      {/* Left: Brand, Connection, Scenario & View Toggles */}
+      <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="text-base leading-none">🌐</span>
+          <span className="font-bold text-sm tracking-wide bg-gradient-to-r from-cyan-400 via-sky-300 to-blue-400 bg-clip-text text-transparent whitespace-nowrap">
+            Logistics Sandbox
+          </span>
+          <span
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold whitespace-nowrap border ${
+              connected
+                ? 'bg-emerald-950/80 text-emerald-400 border-emerald-500/40 shadow-[0_0_8px_rgba(16,185,129,0.2)]'
+                : 'bg-rose-950/80 text-rose-400 border-rose-500/40'
+            }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+            {connected ? 'LIVE' : 'OFFLINE'}
+          </span>
         </div>
 
-        {/* Scenario Preset Selector */}
+        <div className="h-4 w-px bg-slate-800 shrink-0" />
+
+        {/* Scenario Selector */}
         {onSelectScenario && (
-          <div className="flex items-center gap-1.5 ml-1 bg-slate-900/90 border border-slate-700/80 rounded px-2 py-1">
-            <span className="text-xs text-slate-400 font-medium">Scenario:</span>
+          <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 hover:border-slate-700 rounded-md px-2 py-1 transition-colors shrink-0">
+            <span className="text-slate-400 text-[11px] leading-none">📍</span>
             <select
               value={activeScenarioId}
               onChange={(e) => onSelectScenario(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-ops-cyan outline-none cursor-pointer border-none"
-              title="Switch simulation scenario with 1-click state reset"
+              className="bg-transparent text-xs font-semibold text-cyan-300 outline-none cursor-pointer max-w-[170px] truncate pr-1"
+              title="Select scenario preset with 1-click state reset"
             >
               {availableScenarios.map((sc) => (
                 <option key={sc.id} value={sc.id} className="bg-slate-900 text-slate-200">
-                  {sc.name}
+                  {sc.name.replace(' (VRPTW Priority)', '')}
                 </option>
               ))}
             </select>
           </div>
         )}
 
-        {/* Map Layer Toggles */}
-        <div className="flex items-center gap-1.5 ml-2 border-l border-slate-700/60 pl-3">
+        {/* View Layer Toggles */}
+        <div className="flex items-center bg-slate-900/90 p-0.5 rounded-md border border-slate-800 shrink-0">
           {onToggleTrails && (
             <button
               onClick={onToggleTrails}
-              className={`text-xs px-2 py-1 rounded font-medium transition-all ${
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
                 showTrails
-                  ? 'bg-cyan-500/20 text-ops-cyan border border-ops-cyan/50 shadow-[0_0_10px_rgba(0,229,255,0.25)]'
-                  : 'bg-slate-800/60 text-slate-400 border border-slate-700/40 hover:text-slate-200'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_8px_rgba(0,229,255,0.25)]'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
               }`}
-              title="Toggle animated Glowing Light Trails (TripsLayer)"
+              title="Toggle Animated Light Trails (TripsLayer)"
             >
-              ⚡ Trails
+              <span className="leading-none">⚡</span> Trails
             </button>
           )}
 
           {onToggleHeatmap && (
             <button
               onClick={onToggleHeatmap}
-              className={`text-xs px-2 py-1 rounded font-medium transition-all ${
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
                 showHeatmap
-                  ? 'bg-orange-500/20 text-ops-orange border border-ops-orange/50 shadow-[0_0_10px_rgba(255,145,0,0.25)]'
-                  : 'bg-slate-800/60 text-slate-400 border border-slate-700/40 hover:text-slate-200'
+                  ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40 shadow-[0_0_8px_rgba(255,145,0,0.25)]'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
               }`}
               title="Toggle Demand Density Heatmap (HeatmapLayer)"
             >
-              🔥 Heatmap
+              <span className="leading-none">🔥</span> Heatmap
             </button>
           )}
         </div>
-
-        {benchmarkStats && (
-          <div
-            className="algo-indicator text-xs font-mono px-2 py-1 rounded cursor-pointer bg-slate-900/80 border border-slate-700/60 text-slate-300 hover:border-ops-cyan/60"
-            onClick={onOpenBenchmark}
-            title="Active routing & dispatch algorithms. Click to configure test bench."
-          >
-            ⚙️ {benchmarkStats.routingAlgorithm === 'contraction_hierarchies' ? 'CH' : benchmarkStats.routingAlgorithm.toUpperCase()} • {benchmarkStats.dispatchStrategy.replace(/_/g, ' ').toUpperCase()}
-          </div>
-        )}
-
-        {ecommerceBridge && (
-          <div
-            className={`bridge-indicator text-xs font-mono px-2 py-1 rounded ${
-              ecommerceBridge.connected
-                ? 'bridge-online text-teal-300 bg-teal-950/60 border border-teal-500/40'
-                : 'bridge-standby text-slate-400 bg-slate-900/60 border border-slate-700/40'
-            }`}
-            title={`ecommerce-hive-nosql: ${ecommerceBridge.connected ? 'Connected on :4000' : 'Standby (:4000)'}`}
-          >
-            {ecommerceBridge.connected ? '🛒 MARKETPLACE: LIVE' : '🛒 MARKETPLACE: STANDBY'}
-          </div>
-        )}
       </div>
 
-      <div className="controls-center flex items-center gap-3">
-        <div className="time-display font-mono text-base font-bold text-slate-100 bg-slate-900/90 px-3 py-1 rounded border border-slate-700/60 tracking-wider">
+      {/* Center: Authoritative Clock & Playback Pace */}
+      <div className="flex items-center gap-2.5 shrink-0">
+        <div
+          className="flex items-center gap-1.5 px-3 py-1 bg-slate-950/90 rounded-md border border-slate-800 text-cyan-300 font-mono text-sm font-bold tracking-widest shadow-inner whitespace-nowrap"
+          title="Authoritative Simulation Time (HH:MM:SS)"
+        >
+          <span className="text-xs text-slate-400 leading-none">⏱</span>
           {simTime}
         </div>
 
-        <div className="speed-controls flex items-center bg-slate-900/90 rounded border border-slate-700/60 p-0.5">
+        <div className="flex items-center bg-slate-900/90 rounded-md border border-slate-800 p-0.5 shrink-0">
           <button
-            className={`speed-btn px-2.5 py-1 text-xs font-semibold rounded ${
+            className={`px-2 py-0.5 text-xs font-semibold rounded transition-colors cursor-pointer ${
               speed === 0 || status === 'paused'
-                ? 'active bg-ops-cyan text-slate-950 font-bold'
+                ? 'bg-cyan-400 text-slate-950 font-bold shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
             onClick={onPause}
@@ -165,9 +175,9 @@ export function ControlBar({
           {SPEEDS.map((s) => (
             <button
               key={s.value}
-              className={`speed-btn px-2.5 py-1 text-xs font-semibold rounded transition-colors ${
+              className={`px-2 py-0.5 text-xs font-semibold rounded transition-colors cursor-pointer ${
                 speed === s.value && status === 'running'
-                  ? 'active bg-ops-cyan text-slate-950 font-bold'
+                  ? 'bg-cyan-400 text-slate-950 font-bold shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
               onClick={() => {
@@ -181,52 +191,96 @@ export function ControlBar({
         </div>
       </div>
 
-      <div className="controls-right flex items-center gap-2.5">
+      {/* Right: Engine Telemetry Badges, Quick Actions & Start/Stop */}
+      <div className="flex items-center gap-2 shrink-0">
+        {benchmarkStats && (
+          <button
+            onClick={onOpenBenchmark}
+            className="flex items-center gap-1 px-2 py-1 rounded bg-slate-900/90 border border-slate-800 hover:border-cyan-500/50 text-slate-300 text-[11px] font-mono whitespace-nowrap transition-colors cursor-pointer"
+            title="Active routing & dispatch algorithms. Click to configure test bench."
+          >
+            <span className="text-cyan-400 leading-none">⚙</span>
+            <span className="font-bold text-slate-200">{algoShort}</span>
+            <span className="text-slate-600">•</span>
+            <span className="text-slate-400">{strategyShort}</span>
+          </button>
+        )}
+
+        {ecommerceBridge && (
+          <div
+            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-mono whitespace-nowrap border ${
+              ecommerceBridge.connected
+                ? 'bg-teal-950/60 border-teal-500/40 text-teal-300'
+                : 'bg-slate-900/60 border-slate-800 text-slate-400'
+            }`}
+            title={`ecommerce-hive-nosql bridge: ${ecommerceBridge.connected ? 'Connected on port 4000' : 'Standby'}`}
+          >
+            <span className="text-xs leading-none">🛒</span>
+            <span>{ecommerceBridge.connected ? 'Market: Live' : 'Market: Standby'}</span>
+          </div>
+        )}
+
+        <div className="h-4 w-px bg-slate-800 shrink-0" />
+
         {onOpenBenchmark && (
           <button
-            className="btn btn-secondary text-xs px-2.5 py-1.5 rounded font-medium bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-500"
             onClick={onOpenBenchmark}
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-slate-900/90 text-slate-200 border border-slate-700/80 hover:bg-slate-800 hover:border-slate-600 whitespace-nowrap transition-all cursor-pointer"
             title="Open Algorithm Test Bench & Analytics"
           >
-            🧪 Test Bench
+            <span className="leading-none">🧪</span> Bench
           </button>
         )}
 
         {onOpenIncidents && (
           <button
-            className="btn btn-warning text-xs px-2.5 py-1.5 rounded font-medium bg-amber-950/60 text-amber-300 border border-amber-600/50 hover:bg-amber-900/50"
             onClick={onOpenIncidents}
-            title="Open Road Incident Injection Panel"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-amber-950/50 text-amber-300 border border-amber-600/50 hover:bg-amber-900/50 hover:border-amber-500 whitespace-nowrap transition-all cursor-pointer"
+            title="Open Incident Injection Panel"
           >
-            ⚡ Inject Incident
+            <span className="leading-none">⚡</span> Incident
           </button>
         )}
 
-        <div className={`status-indicator status-${status} flex items-center gap-1.5 text-xs font-mono font-semibold px-2 py-1 rounded bg-slate-900/80 border border-slate-700/60`}>
-          <span className={`status-dot w-2 h-2 rounded-full ${
-            status === 'running' ? 'bg-emerald-400 animate-pulse' : status === 'paused' ? 'bg-amber-400' : 'bg-rose-500'
-          }`} />
-          <span className={status === 'running' ? 'text-emerald-400' : status === 'paused' ? 'text-amber-400' : 'text-rose-400'}>
+        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-900/90 border border-slate-800 text-xs font-mono font-bold whitespace-nowrap">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              status === 'running'
+                ? 'bg-emerald-400 animate-pulse'
+                : status === 'paused'
+                ? 'bg-amber-400'
+                : 'bg-rose-500'
+            }`}
+          />
+          <span
+            className={
+              status === 'running'
+                ? 'text-emerald-400'
+                : status === 'paused'
+                ? 'text-amber-400'
+                : 'text-rose-400'
+            }
+          >
             {status.toUpperCase()}
           </span>
         </div>
 
         {status === 'stopped' ? (
           <button
-            className="btn btn-primary text-xs px-3 py-1.5 rounded font-bold bg-ops-blue text-white hover:bg-blue-600 transition-colors"
             onClick={onStart}
+            className="flex items-center gap-1 px-3 py-1 text-xs font-bold rounded bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.35)] whitespace-nowrap transition-all cursor-pointer"
           >
             ▶ Start
           </button>
         ) : (
           <button
-            className="btn btn-danger text-xs px-3 py-1.5 rounded font-bold bg-ops-red text-white hover:bg-rose-600 transition-colors"
             onClick={onStop}
+            className="flex items-center gap-1 px-3 py-1 text-xs font-bold rounded bg-rose-600 hover:bg-rose-500 text-white shadow-[0_0_12px_rgba(225,29,72,0.35)] whitespace-nowrap transition-all cursor-pointer"
           >
             ■ Stop
           </button>
         )}
       </div>
-    </div>
+    </header>
   );
 }
