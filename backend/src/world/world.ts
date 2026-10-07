@@ -8,6 +8,7 @@
 import {
   Vehicle,
   Order,
+  OrderItem,
   OrderPriority,
   Warehouse,
   Driver,
@@ -17,6 +18,7 @@ import {
 } from './types.js';
 import { SeededRandom } from '../utils/random.js';
 import { randomPointInBounds } from '../utils/geo.js';
+import { FALLBACK_CAMBODIA_CATALOG, EcommerceProduct } from '../integrations/ecommerce.js';
 
 /** Cambodian first names for driver generation */
 const DRIVER_NAMES = [
@@ -36,6 +38,7 @@ export class World {
   private warehouses: Map<string, Warehouse> = new Map();
   private drivers: Map<string, Driver> = new Map();
   private customers: Map<string, Customer> = new Map();
+  private catalog: EcommerceProduct[] = [...FALLBACK_CAMBODIA_CATALOG];
 
   private config: ScenarioConfig;
   private rng: SeededRandom;
@@ -189,6 +192,25 @@ export class World {
 
     const slaDeadline = simTimestamp + slaDurationMin * 60 * 1000;
 
+    // Pick 1-3 authentic items from the e-commerce catalog
+    const itemCount = this.rng.nextInt(1, 3);
+    const selectedItems: OrderItem[] = [];
+    let calculatedWeight = 0;
+
+    for (let i = 0; i < itemCount; i++) {
+      const prod = this.rng.pick(this.catalog);
+      const qty = this.rng.nextInt(1, prod.category === 'Food & Groceries' ? 3 : 1);
+      selectedItems.push({
+        product_id: prod.product_id,
+        name: prod.name,
+        quantity: qty,
+        price: prod.price,
+        category: prod.category,
+        weight_kg: Math.round(prod.weight_kg * qty * 10) / 10,
+      });
+      calculatedWeight += prod.weight_kg * qty;
+    }
+
     const order: Order = {
       id: orderId,
       customerId,
@@ -197,8 +219,8 @@ export class World {
       slaDeadline,
       slaDurationMin,
       slaStatus: 'on_time',
-      items: [{ name: 'Package', quantity: 1 }],
-      totalWeight_kg: this.rng.nextFloat(1, 50),
+      items: selectedItems,
+      totalWeight_kg: Math.max(0.5, Math.round(calculatedWeight * 10) / 10),
       pickupLocation: depot.position,
       deliveryLocation,
       assignedVehicleId: null,
@@ -211,6 +233,16 @@ export class World {
 
     this.orders.set(orderId, order);
     return order;
+  }
+
+  public setCatalog(catalog: EcommerceProduct[]): void {
+    if (catalog && catalog.length > 0) {
+      this.catalog = catalog;
+    }
+  }
+
+  public getCatalog(): EcommerceProduct[] {
+    return this.catalog;
   }
 
   /**

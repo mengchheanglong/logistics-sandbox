@@ -48,6 +48,15 @@ export interface RouteLeg {
 export type OrderPriority = 'standard' | 'express' | 'urgent';
 export type SlaStatus = 'on_time' | 'at_risk' | 'breached';
 
+export interface OrderItem {
+  product_id?: string;
+  name: string;
+  quantity: number;
+  price?: number;
+  category?: string;
+  weight_kg?: number;
+}
+
 export interface Order {
   id: string;
   customerId: string;
@@ -56,6 +65,7 @@ export interface Order {
   slaDeadline?: number;
   slaDurationMin?: number;
   slaStatus?: SlaStatus;
+  items?: OrderItem[];
   totalWeight_kg: number;
   pickupLocation: Coordinate;
   deliveryLocation: Coordinate;
@@ -106,6 +116,7 @@ export interface EcommerceBridgeStatus {
   lastSyncTimestamp: number | null;
   ordersIngestedCount: number;
   telemetryPingsEmittedCount: number;
+  catalogItemsCount?: number;
 }
 
 export type RoutingAlgorithm =
@@ -157,6 +168,7 @@ export interface SimulationState {
   benchmarkStats?: AlgorithmBenchmarkStats;
   incidents?: RoadIncident[];
   activeScenarioId?: string;
+  persistence?: any;
 }
 
 export interface SimulationEvent {

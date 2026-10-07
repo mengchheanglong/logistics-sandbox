@@ -230,6 +230,26 @@ export function VehiclePanel({
                         </span>
                       </div>
                     )}
+
+                    {order?.items && order.items.length > 0 && (
+                      <div className="pt-1.5 border-t border-slate-800/70 space-y-1">
+                        <span className="text-[9px] uppercase font-bold text-slate-500 block">E-Commerce Items:</span>
+                        <div className="space-y-0.5">
+                          {order.items.map((item, itemIdx) => (
+                            <div key={itemIdx} className="flex items-center justify-between text-[10px] text-slate-300">
+                              <span className="truncate max-w-[160px]" title={item.name}>
+                                📦 {item.quantity}x {item.name}
+                              </span>
+                              {item.price !== undefined && (
+                                <span className="font-mono text-emerald-400 font-bold text-[9px]">
+                                  ${(item.price * item.quantity).toFixed(2)}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

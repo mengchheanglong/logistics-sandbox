@@ -21,6 +21,7 @@ import { Dispatcher, AssignmentResult } from '../dispatch/dispatcher.js';
 import { VrpTourSolver } from '../dispatch/vrp.js';
 import { RoutingClient } from '../routing/client.js';
 import { EcommerceClient, EcommerceOrder } from '../integrations/ecommerce.js';
+import { createPersistenceLayer, IPersistenceLayer, TelemetryPing } from '../persistence/index.js';
 import { SCENARIO_PRESETS, defaultScenario } from '../scenarios/presets.js';
 import {
   Coordinate,
@@ -50,6 +51,7 @@ export class SimulationEngine {
   public vrpSolver: VrpTourSolver;
   public routingClient: RoutingClient;
   public ecommerceClient: EcommerceClient;
+  public persistence: IPersistenceLayer;
 
   private simulationId: string;
   private intervalId: NodeJS.Timeout | null = null;
@@ -104,6 +106,7 @@ export class SimulationEngine {
     this.vrpSolver = new VrpTourSolver();
     this.routingClient = new RoutingClient();
     this.ecommerceClient = new EcommerceClient();
+    this.persistence = createPersistenceLayer();
 
     this.targetOrderCount = defaultScenario.orderCount;
     // Spread order generation across the simulation duration
@@ -117,7 +120,8 @@ export class SimulationEngine {
       `[SimulationEngine] Created simulation ${this.simulationId}`,
       `| ${defaultScenario.vehicleCount} vehicles`,
       `| ${defaultScenario.orderCount} target orders`,
-      `| ${defaultScenario.duration_hours}h duration`
+      `| ${defaultScenario.duration_hours}h duration`,
+      `| Persistence: ${this.persistence.driverType}`
     );
   }
 
@@ -131,6 +135,7 @@ export class SimulationEngine {
       const order = this.world.generateOrder(simTime);
       this.ordersGenerated++;
       this.dispatchQueue.push(order.id);
+      this.persistence.orders.saveOrder(order).catch(() => {});
     }
     this.sortDispatchQueueByEDF();
   }
@@ -154,6 +159,12 @@ export class SimulationEngine {
     this.ecommerceClient.checkHealth().then((ok) => {
       if (ok) {
         console.log('[SimulationEngine] Upstream ecommerce-hive-nosql marketplace connected ✓');
+        this.ecommerceClient.fetchCatalog().then((catalog) => {
+          if (catalog && catalog.length > 0) {
+            this.world.setCatalog(catalog);
+            console.log(`[SimulationEngine] Synchronized ${catalog.length} live catalog products from ecommerce marketplace`);
+          }
+        });
       } else {
         console.log('[SimulationEngine] Upstream ecommerce-hive-nosql marketplace standby (not reachable on port 4000)');
       }
@@ -270,6 +281,7 @@ export class SimulationEngine {
     };
 
     this.world.addOrder(order);
+    this.persistence.orders.saveOrder(order).catch(() => {});
     this.dispatchQueue.push(order.id);
     this.sortDispatchQueueByEDF();
     this.ecommerceClient.recordOrderIngested();
@@ -403,6 +415,26 @@ export class SimulationEngine {
       this.lastOrderGenTime = simTime;
       this.dispatchQueue.push(order.id);
       this.sortDispatchQueueByEDF();
+      this.persistence.orders.saveOrder(order).catch(() => {});
+
+      if (this.ecommerceClient.getStatus().connected) {
+        this.ecommerceClient.createMarketplaceOrder({
+          order_id: order.id,
+          customer_id: order.customerId,
+          customer_name: `Customer (${order.customerId})`,
+          items: order.items.map(it => ({
+            product_id: it.product_id || 'P-ITEM',
+            name: it.name,
+            quantity: it.quantity,
+            price: it.price || 10,
+            category: it.category,
+            weight_kg: it.weight_kg,
+          })),
+          total: order.items.reduce((acc, it) => acc + (it.price || 10) * it.quantity, 0),
+          province: 'Phnom Penh',
+          status: 'Pending',
+        }).catch(() => {});
+      }
 
       this.emitEvent('order', order.id, 'order.created', {
         customerId: order.customerId,
@@ -651,6 +683,22 @@ export class SimulationEngine {
         speed_kmh: vehicle.speed_kmh,
       });
 
+      // Stream GPS ping to Cassandra persistence
+      const pingDate = new Date().toISOString().split('T')[0];
+      const ping: TelemetryPing = {
+        rider_id: vehicle.driverId,
+        ping_timestamp: simTime,
+        ping_date: pingDate,
+        lat: newPosition.lat,
+        lon: newPosition.lon,
+        speed_kmh: vehicle.speed_kmh,
+        battery_level: 92,
+        status: vehicle.status,
+        simulation_id: this.simulationId,
+      };
+      this.persistence.telemetry.savePing(ping).catch(() => {});
+      this.persistence.vehicles.saveVehicleState(vehicle).catch(() => {});
+
       // Stream GPS ping to Cassandra via upstream ecommerce API
       this.ecommerceClient.sendRiderPing(vehicle.driverId, newPosition, vehicle.speed_kmh);
     }
@@ -679,7 +727,14 @@ export class SimulationEngine {
           order.status = 'delivered';
           order.deliveredAt = simTime;
           vehicle.currentLoad_kg = Math.max(0, vehicle.currentLoad_kg - order.totalWeight_kg);
+          this.persistence.orders.updateOrderStatus(order.id, 'delivered', simTime).catch(() => {});
           this.ecommerceClient.updateOrderStatus(order.id, 'Delivered', vehicle.driverId);
+
+          if (order.items && order.items.length > 0) {
+            this.ecommerceClient.adjustStock(
+              order.items.map(it => ({ product_id: it.product_id || '', quantity: it.quantity }))
+            ).catch(() => {});
+          }
 
           this.emitEvent('order', order.id, 'order.delivered', {
             vehicleId: vehicle.id,
@@ -726,9 +781,15 @@ export class SimulationEngine {
         if (order) {
           order.status = 'delivered';
           order.deliveredAt = simTime;
+          this.persistence.orders.updateOrderStatus(orderId, 'delivered', simTime).catch(() => {});
 
-          // Notify upstream marketplace that order is Delivered
+          // Notify upstream marketplace that order is Delivered and decrement stock
           this.ecommerceClient.updateOrderStatus(orderId, 'Delivered', vehicle.driverId);
+          if (order.items && order.items.length > 0) {
+            this.ecommerceClient.adjustStock(
+              order.items.map(it => ({ product_id: it.product_id || '', quantity: it.quantity }))
+            ).catch(() => {});
+          }
 
           this.emitEvent('order', orderId, 'order.delivered', {
             vehicleId: vehicle.id,
@@ -880,6 +941,7 @@ export class SimulationEngine {
       orders,
       warehouses: this.world.getAllWarehouses(),
       ecommerceBridge: this.ecommerceClient.getStatus(),
+      persistence: this.persistence.getStatus(),
       trafficMultiplier: this.trafficMultiplier,
       benchmarkStats: this.getBenchmarkStats(),
       incidents: this.incidents.filter((i) => i.active),

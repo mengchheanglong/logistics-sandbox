@@ -53,15 +53,26 @@ export interface Driver {
 export type OrderPriority = 'standard' | 'express' | 'urgent';
 export type SlaStatus = 'on_time' | 'at_risk' | 'breached';
 
+export type OrderStatus = 'pending' | 'assigned' | 'picked_up' | 'in_transit' | 'delivered' | 'cancelled';
+
+export interface OrderItem {
+  product_id?: string;
+  name: string;
+  quantity: number;
+  price?: number;
+  category?: string;
+  weight_kg?: number;
+}
+
 export interface Order {
   id: string;
   customerId: string;
-  status: 'pending' | 'assigned' | 'picked_up' | 'in_transit' | 'delivered' | 'cancelled';
+  status: OrderStatus;
   priority?: OrderPriority;
   slaDeadline?: number;
   slaDurationMin?: number;
   slaStatus?: SlaStatus;
-  items: any[];
+  items: OrderItem[];
   totalWeight_kg: number;
   pickupLocation: Coordinate;
   deliveryLocation: Coordinate;
@@ -122,6 +133,7 @@ export interface EcommerceBridgeStatus {
   lastSyncTimestamp: number | null;
   ordersIngestedCount: number;
   telemetryPingsEmittedCount: number;
+  catalogItemsCount?: number;
 }
 
 export type RoutingAlgorithm =
@@ -173,6 +185,7 @@ export interface SimulationState {
   benchmarkStats?: AlgorithmBenchmarkStats;
   incidents?: RoadIncident[];
   activeScenarioId?: string;
+  persistence?: any;
 }
 
 export interface DepotConfig {

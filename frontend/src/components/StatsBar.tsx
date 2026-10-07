@@ -98,9 +98,17 @@ export function StatsBar({ stats, ecommerceBridge }: StatsBarProps) {
         <>
           <div className="h-5 w-px bg-slate-800 shrink-0" />
 
-          {/* Cluster 4: Infrastructure Bridges */}
-          <div className="flex items-center gap-4 shrink-0">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Bridge</span>
+          {/* Cluster 4: Infrastructure & E-Commerce Synchronization */}
+          <div className="flex items-center gap-3.5 shrink-0">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${ecommerceBridge.connected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              NoSQL Bridge
+            </span>
+            <StatGroup
+              label="Inventory SKUs"
+              value={`${ecommerceBridge.catalogItemsCount ?? 16} Live`}
+              colorClass="text-emerald-400 font-semibold"
+            />
             <StatGroup
               label="Market Ingest"
               value={ecommerceBridge.ordersIngestedCount.toLocaleString()}

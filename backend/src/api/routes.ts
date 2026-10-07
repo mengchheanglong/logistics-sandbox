@@ -193,5 +193,52 @@ export function setupRoutes(engine: SimulationEngine): Router {
     });
   });
 
+  // Phase 3 Persistence Layer & Inventory Inspection Endpoints
+  router.get('/persistence/status', (req, res) => {
+    res.json(engine.persistence.getStatus());
+  });
+
+  router.get('/telemetry/rider/:riderId', async (req, res) => {
+    const limit = Number(req.query.limit) || 50;
+    const pings = await engine.persistence.telemetry.getRecentPings(req.params.riderId, limit);
+    res.json({
+      riderId: req.params.riderId,
+      count: pings.length,
+      pings,
+    });
+  });
+
+  router.get('/orders/history', async (req, res) => {
+    const status = req.query.status as string | undefined;
+    const customerId = req.query.customerId as string | undefined;
+    const orders = await engine.persistence.orders.getAllOrders({ status, customerId });
+    const metrics = await engine.persistence.orders.getMetrics();
+    res.json({
+      metrics,
+      count: orders.length,
+      orders,
+    });
+  });
+
+  router.get('/inventory/catalog', (req, res) => {
+    const catalog = engine.world.getCatalog();
+    res.json({
+      count: catalog.length,
+      connected: engine.ecommerceClient.getStatus().connected,
+      products: catalog,
+    });
+  });
+
+  router.post('/inventory/adjust', async (req, res) => {
+    const { items } = req.body;
+    if (!Array.isArray(items)) {
+      res.status(400).json({ error: 'items array is required' });
+      return;
+    }
+    const ok = await engine.ecommerceClient.adjustStock(items);
+    res.json({ success: ok, itemsAdjusted: items.length });
+  });
+
   return router;
 }
+
