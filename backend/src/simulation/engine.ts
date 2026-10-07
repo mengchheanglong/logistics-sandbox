@@ -774,12 +774,6 @@ export class SimulationEngine {
           this.persistence.orders.updateOrderStatus(order.id, 'delivered', simTime).catch(() => {});
           this.ecommerceClient.updateOrderStatus(order.id, 'Delivered', vehicle.driverId);
 
-          if (order.items && order.items.length > 0) {
-            this.ecommerceClient.adjustStock(
-              order.items.map(it => ({ product_id: it.product_id || '', quantity: it.quantity }))
-            ).catch(() => {});
-          }
-
           this.emitEvent('order', order.id, 'order.delivered', {
             vehicleId: vehicle.id,
             deliveredAt: simTime,
@@ -827,13 +821,8 @@ export class SimulationEngine {
           order.deliveredAt = simTime;
           this.persistence.orders.updateOrderStatus(orderId, 'delivered', simTime).catch(() => {});
 
-          // Notify upstream marketplace that order is Delivered and decrement stock
+          // Notify upstream marketplace that order is Delivered
           this.ecommerceClient.updateOrderStatus(orderId, 'Delivered', vehicle.driverId);
-          if (order.items && order.items.length > 0) {
-            this.ecommerceClient.adjustStock(
-              order.items.map(it => ({ product_id: it.product_id || '', quantity: it.quantity }))
-            ).catch(() => {});
-          }
 
           this.emitEvent('order', orderId, 'order.delivered', {
             vehicleId: vehicle.id,
