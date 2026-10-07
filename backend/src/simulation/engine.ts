@@ -3,11 +3,12 @@
  *
  * Each tick:
  * 1. Advance the simulation clock
- * 2. Generate new orders (if below target count)
+ * 2. Generate new scenario orders (or ingest from upstream ecommerce-hive-nosql)
  * 3. Dispatch pending orders to idle vehicles
  * 4. Move vehicles along their route geometry
- * 5. Check for delivery completion
- * 6. Emit domain events
+ * 5. Stream telemetry pings back into ecommerce-hive-nosql (Cassandra)
+ * 6. Check for delivery completion and update upstream order status
+ * 7. Emit domain events
  *
  * The engine is the single source of truth for the simulation world.
  * The frontend observes this state — it never drives it.
@@ -18,9 +19,10 @@ import { World } from '../world/world.js';
 import { EventBus } from '../events/event-bus.js';
 import { Dispatcher, AssignmentResult } from '../dispatch/dispatcher.js';
 import { RoutingClient } from '../routing/client.js';
+import { EcommerceClient, EcommerceOrder } from '../integrations/ecommerce.js';
 import { defaultScenario } from '../scenarios/default.js';
-import { SimulationState, SimulationEvent, Vehicle } from '../world/types.js';
-import { interpolateAlongPath } from '../utils/geo.js';
+import { SimulationState, SimulationEvent, Vehicle, Order } from '../world/types.js';
+import { interpolateAlongPath, randomPointInBounds } from '../utils/geo.js';
 import { v4 as uuidv4 } from 'uuid';
 
 export class SimulationEngine {
@@ -29,6 +31,7 @@ export class SimulationEngine {
   public eventBus: EventBus;
   public dispatcher: Dispatcher;
   public routingClient: RoutingClient;
+  public ecommerceClient: EcommerceClient;
 
   private simulationId: string;
   private intervalId: NodeJS.Timeout | null = null;
@@ -43,6 +46,8 @@ export class SimulationEngine {
   private orderGenerationIntervalMs: number;
   /** Last sim time an order was generated */
   private lastOrderGenTime: number = 0;
+  /** Last tick count for periodic background tasks (e.g. ecommerce polling) */
+  private tickCounter: number = 0;
 
   /** Pending dispatch queue — orders waiting for route calculation */
   private dispatchQueue: string[] = [];
@@ -56,6 +61,7 @@ export class SimulationEngine {
     this.world = new World(defaultScenario);
     this.dispatcher = new Dispatcher();
     this.routingClient = new RoutingClient();
+    this.ecommerceClient = new EcommerceClient();
 
     this.targetOrderCount = defaultScenario.orderCount;
     // Spread order generation across the simulation duration
@@ -82,6 +88,15 @@ export class SimulationEngine {
         console.log('[SimulationEngine] osm-pathfinder is available ✓');
       } else {
         console.warn('[SimulationEngine] osm-pathfinder is NOT available — using fallback routing');
+      }
+    });
+
+    // Check upstream ecommerce-hive-nosql bridge availability
+    this.ecommerceClient.checkHealth().then((ok) => {
+      if (ok) {
+        console.log('[SimulationEngine] Upstream ecommerce-hive-nosql marketplace connected ✓');
+      } else {
+        console.log('[SimulationEngine] Upstream ecommerce-hive-nosql marketplace standby (not reachable on port 4000)');
       }
     });
 
@@ -135,28 +150,98 @@ export class SimulationEngine {
     const now = Date.now();
     const deltaMs = now - this.lastTickTime;
     this.lastTickTime = now;
+    this.tickCounter++;
 
     // 1. Advance simulation clock
     this.clock.tick(deltaMs);
     const simTime = this.clock.getSimulatedTime();
 
-    // 2. Generate orders
+    // 2. Poll upstream ecommerce-hive-nosql periodically (every 50 ticks = 5 seconds)
+    if (this.tickCounter % 50 === 0) {
+      this.pollEcommerceOrders();
+    }
+
+    // 3. Generate scenario orders
     this.generateOrders(simTime);
 
-    // 3. Dispatch pending orders (async, non-blocking)
+    // 4. Dispatch pending orders (async, non-blocking)
     this.dispatchPendingOrders();
 
-    // 4. Move vehicles along their routes
+    // 5. Move vehicles along their routes
     this.updateVehicles(simTime, deltaMs);
   }
 
   /**
-   * Generate new orders at a steady rate based on the scenario config.
+   * Ingest an order from the upstream ecommerce-hive-nosql marketplace into the sandbox.
+   */
+  public ingestEcommerceOrder(eOrder: EcommerceOrder): Order {
+    const depots = this.world.getAllWarehouses();
+    const depot = depots.length > 0 ? depots[0] : { position: { lat: 11.568, lon: 104.922 } };
+
+    // Calculate delivery coordinate inside scenario bounds
+    const deliveryLocation = randomPointInBounds(this.world.getConfig().bounds, {
+      nextFloat: (min, max) => min + Math.random() * (max - min),
+    });
+
+    const totalWeight = (eOrder.items || []).reduce((acc, item) => acc + (item.quantity || 1) * 2, 5);
+
+    const order: Order = {
+      id: eOrder.order_id,
+      customerId: eOrder.customer_id || 'C-ECOMMERCE',
+      status: 'pending',
+      items: eOrder.items || [{ name: 'Marketplace Item', quantity: 1 }],
+      totalWeight_kg: totalWeight,
+      pickupLocation: depot.position,
+      deliveryLocation,
+      assignedVehicleId: null,
+      createdAt: this.clock.getSimulatedTime(),
+      assignedAt: null,
+      pickedUpAt: null,
+      deliveredAt: null,
+      estimatedDeliveryTime: null,
+    };
+
+    this.world.addOrder(order);
+    this.dispatchQueue.push(order.id);
+    this.ecommerceClient.recordOrderIngested();
+
+    this.emitEvent('order', order.id, 'order.created', {
+      source: 'ecommerce-hive-nosql',
+      customerName: eOrder.customer_name,
+      totalAmount: eOrder.total,
+      deliveryAddress: eOrder.delivery_address,
+      itemsCount: (eOrder.items || []).length,
+    });
+
+    console.log(`[SimulationEngine] Ingested marketplace order: ${order.id} for ${eOrder.customer_name}`);
+    return order;
+  }
+
+  /**
+   * Poll upstream marketplace for pending orders.
+   */
+  private async pollEcommerceOrders(): Promise<void> {
+    try {
+      const isUp = await this.ecommerceClient.checkHealth();
+      if (!isUp) return;
+
+      const pendingOrders = await this.ecommerceClient.fetchPendingOrders();
+      for (const eOrder of pendingOrders) {
+        if (!this.world.getOrder(eOrder.order_id)) {
+          this.ingestEcommerceOrder(eOrder);
+        }
+      }
+    } catch (err) {
+      // Non-blocking background sync error
+    }
+  }
+
+  /**
+   * Generate new scenario orders at a steady rate.
    */
   private generateOrders(simTime: number): void {
     if (this.ordersGenerated >= this.targetOrderCount) return;
 
-    // Generate orders at the configured rate
     if (simTime - this.lastOrderGenTime >= this.orderGenerationIntervalMs) {
       const order = this.world.generateOrder(simTime);
       this.ordersGenerated++;
@@ -174,7 +259,6 @@ export class SimulationEngine {
 
   /**
    * Try to dispatch pending orders to idle vehicles.
-   * Routing calls are async, so we process one at a time.
    */
   private dispatchPendingOrders(): void {
     if (this.dispatching || this.dispatchQueue.length === 0) return;
@@ -214,6 +298,9 @@ export class SimulationEngine {
             order.estimatedDeliveryTime =
               this.clock.getSimulatedTime() + result.route.durationS * 1000;
 
+            // Update upstream ecommerce-hive-nosql status (Out for Delivery)
+            this.ecommerceClient.updateOrderStatus(order.id, 'Out for Delivery', vehicle.driverId);
+
             this.emitEvent('order', order.id, 'order.assigned', {
               vehicleId: vehicle.id,
               algorithm: result.route.algorithm,
@@ -229,7 +316,6 @@ export class SimulationEngine {
           }
           this.dispatchQueue.shift();
         }
-        // If no assignment possible, leave in queue for next tick
         this.dispatching = false;
       })
       .catch((err) => {
@@ -251,33 +337,25 @@ export class SimulationEngine {
 
   /**
    * Advance a single vehicle along its route geometry.
-   *
-   * The vehicle's routeProgress (0–1) is incremented based on the elapsed
-   * simulation time relative to the route's estimated duration.
    */
   private advanceVehicle(vehicle: Vehicle, deltaRealMs: number): void {
     if (vehicle.routeGeometry.length < 2 || vehicle.routeDurationS <= 0) {
-      // No valid route — complete immediately
       this.completeVehicleRoute(vehicle);
       return;
     }
 
-    // Calculate how much sim time elapsed this tick
-    const deltaSimMs = deltaRealMs * this.clock.speed * 60; // SIM_TIME_RATIO = 60
+    const deltaSimMs = deltaRealMs * this.clock.speed * 60;
     const deltaSimS = deltaSimMs / 1000;
 
-    // Progress increment = elapsed sim seconds / total route duration
     const progressIncrement = deltaSimS / vehicle.routeDurationS;
     vehicle.routeProgress = Math.min(1, vehicle.routeProgress + progressIncrement);
 
     // Interpolate position along the route polyline
     const newPosition = interpolateAlongPath(vehicle.routeGeometry, vehicle.routeProgress);
     vehicle.position = newPosition;
-
-    // Estimate current speed from route distance and duration
     vehicle.speed_kmh = (vehicle.routeDistanceM / vehicle.routeDurationS) * 3.6;
 
-    // Emit position update event (throttled — every ~10 ticks)
+    // Emit position update event & stream Cassandra ping to ecommerce-hive-nosql (throttled)
     if (Math.random() < 0.1) {
       this.emitEvent('vehicle', vehicle.id, 'vehicle.position.updated', {
         lat: newPosition.lat,
@@ -285,6 +363,9 @@ export class SimulationEngine {
         progress: vehicle.routeProgress,
         speed_kmh: vehicle.speed_kmh,
       });
+
+      // Stream GPS ping to Cassandra via upstream ecommerce API
+      this.ecommerceClient.sendRiderPing(vehicle.driverId, newPosition, vehicle.speed_kmh);
     }
 
     // Check if vehicle reached destination
@@ -300,12 +381,14 @@ export class SimulationEngine {
     const simTime = this.clock.getSimulatedTime();
 
     if (vehicle.status === 'en_route') {
-      // Vehicle arrived at delivery location — mark orders as delivered
       for (const orderId of vehicle.assignedOrderIds) {
         const order = this.world.getOrder(orderId);
         if (order) {
           order.status = 'delivered';
           order.deliveredAt = simTime;
+
+          // Notify upstream marketplace that order is Delivered
+          this.ecommerceClient.updateOrderStatus(orderId, 'Delivered', vehicle.driverId);
 
           this.emitEvent('order', orderId, 'order.delivered', {
             vehicleId: vehicle.id,
@@ -321,7 +404,6 @@ export class SimulationEngine {
       // Vehicle now returns to depot
       const depot = this.world.getAllWarehouses().find((w) => w.id === vehicle.depotId);
       if (depot) {
-        // Request return route
         this.routingClient
           .calculateRoute(vehicle.position, depot.position)
           .then((returnRoute) => {
@@ -335,14 +417,12 @@ export class SimulationEngine {
             vehicle.currentRouteId = `RET-${vehicle.id}`;
           })
           .catch(() => {
-            // On error, just reset to idle at current position
             this.resetVehicleToIdle(vehicle);
           });
       } else {
         this.resetVehicleToIdle(vehicle);
       }
     } else if (vehicle.status === 'returning') {
-      // Vehicle arrived back at depot
       this.resetVehicleToIdle(vehicle);
       this.emitEvent('vehicle', vehicle.id, 'vehicle.returned_to_depot', {
         depotId: vehicle.depotId,
@@ -350,9 +430,6 @@ export class SimulationEngine {
     }
   }
 
-  /**
-   * Reset a vehicle to idle state.
-   */
   private resetVehicleToIdle(vehicle: Vehicle): void {
     vehicle.status = 'idle';
     vehicle.routeGeometry = [];
@@ -365,9 +442,6 @@ export class SimulationEngine {
     vehicle.speed_kmh = 0;
   }
 
-  /**
-   * Emit a domain event through the event bus.
-   */
   private emitEvent(
     entityType: string,
     entityId: string,
@@ -388,7 +462,7 @@ export class SimulationEngine {
   }
 
   /**
-   * Get the current full simulation state for API/WebSocket consumers.
+   * Get current full simulation state.
    */
   public getState(): SimulationState {
     const vehicles = this.world.getAllVehicles();
@@ -400,7 +474,6 @@ export class SimulationEngine {
       (v) => v.status !== 'idle' && v.status !== 'broken_down'
     );
 
-    // Calculate average delivery time
     let avgDeliveryTimeMin = 0;
     if (deliveredOrders.length > 0) {
       const totalDeliveryTime = deliveredOrders.reduce((sum, o) => {
@@ -412,7 +485,6 @@ export class SimulationEngine {
       avgDeliveryTimeMin = totalDeliveryTime / deliveredOrders.length / 60000;
     }
 
-    // Calculate total distance
     const totalDistanceKm = vehicles.reduce((sum, v) => {
       if (v.routeDistanceM > 0 && v.routeProgress > 0) {
         return sum + (v.routeDistanceM * v.routeProgress) / 1000;
@@ -432,21 +504,19 @@ export class SimulationEngine {
       vehicles,
       orders,
       warehouses: this.world.getAllWarehouses(),
+      ecommerceBridge: this.ecommerceClient.getStatus(),
       stats: {
         activeVehicles: activeVehicles.length,
         totalOrders: orders.length,
         deliveredOrders: deliveredOrders.length,
         pendingOrders: pendingOrders.length,
-        lateOrders: 0, // TODO: implement deadline tracking
+        lateOrders: 0,
         avgDeliveryTimeMin: Math.round(avgDeliveryTimeMin * 10) / 10,
         totalDistanceKm: Math.round(totalDistanceKm * 10) / 10,
       },
     };
   }
 
-  /**
-   * Handle operator-injected events (God's-eye interventions).
-   */
   public injectEvent(event: { type: string; targetId?: string; payload?: Record<string, unknown> }): void {
     switch (event.type) {
       case 'vehicle_breakdown': {

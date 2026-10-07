@@ -1,10 +1,11 @@
-import type { SpeedSetting } from '../types';
+import type { SpeedSetting, EcommerceBridgeStatus } from '../types';
 
 interface ControlBarProps {
   simTime: string;
   speed: number;
   status: 'running' | 'paused' | 'stopped';
   connected: boolean;
+  ecommerceBridge?: EcommerceBridgeStatus;
   onSpeedChange: (speed: SpeedSetting) => void;
   onPause: () => void;
   onResume: () => void;
@@ -20,7 +21,7 @@ const SPEEDS: { label: string; value: SpeedSetting }[] = [
 ];
 
 export function ControlBar({
-  simTime, speed, status, connected,
+  simTime, speed, status, connected, ecommerceBridge,
   onSpeedChange, onPause, onResume, onStart, onStop,
 }: ControlBarProps) {
   return (
@@ -30,6 +31,14 @@ export function ControlBar({
         <div className={`ws-indicator ${connected ? 'ws-connected' : 'ws-disconnected'}`}>
           {connected ? 'LIVE' : 'OFFLINE'}
         </div>
+        {ecommerceBridge && (
+          <div
+            className={`bridge-indicator ${ecommerceBridge.connected ? 'bridge-online' : 'bridge-standby'}`}
+            title={`ecommerce-hive-nosql: ${ecommerceBridge.connected ? 'Connected on :4000' : 'Standby (:4000)'}`}
+          >
+            {ecommerceBridge.connected ? '🛒 MARKETPLACE: LIVE' : '🛒 MARKETPLACE: STANDBY'}
+          </div>
+        )}
       </div>
 
       <div className="controls-center">

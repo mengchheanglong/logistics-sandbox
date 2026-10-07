@@ -63,6 +63,15 @@ export interface SimulationStats {
   totalDistanceKm: number;
 }
 
+export interface EcommerceBridgeStatus {
+  enabled: boolean;
+  connected: boolean;
+  baseUrl: string;
+  lastSyncTimestamp: number | null;
+  ordersIngestedCount: number;
+  telemetryPingsEmittedCount: number;
+}
+
 export interface SimulationState {
   simulationId: string;
   simTime: number;
@@ -72,6 +81,7 @@ export interface SimulationState {
   orders: Order[];
   warehouses: Warehouse[];
   stats: SimulationStats;
+  ecommerceBridge?: EcommerceBridgeStatus;
 }
 
 export interface SimulationEvent {

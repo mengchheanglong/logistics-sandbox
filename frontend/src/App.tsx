@@ -69,6 +69,7 @@ export default function App() {
         speed={state.speed}
         status={state.status}
         connected={connected}
+        ecommerceBridge={state.ecommerceBridge}
         onSpeedChange={setSpeed}
         onPause={pauseSimulation}
         onResume={resumeSimulation}
@@ -92,7 +93,7 @@ export default function App() {
         )}
       </div>
 
-      <StatsBar stats={state.stats} />
+      <StatsBar stats={state.stats} ecommerceBridge={state.ecommerceBridge} />
     </div>
   );
 }

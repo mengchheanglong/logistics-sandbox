@@ -80,5 +80,47 @@ export function setupRoutes(engine: SimulationEngine): Router {
     res.json(engine.getState().stats);
   });
 
+  // Upstream ecommerce-hive-nosql integration endpoints
+  router.get('/integrations/ecommerce/status', (req, res) => {
+    res.json(engine.ecommerceClient.getStatus());
+  });
+
+  router.post('/integrations/ecommerce/order', (req, res) => {
+    const eOrder = req.body;
+    if (!eOrder || !eOrder.order_id) {
+      res.status(400).json({ error: 'order_id is required' });
+      return;
+    }
+    const order = engine.ingestEcommerceOrder(eOrder);
+    res.json({ status: 'order_ingested', order });
+  });
+
+  router.post('/integrations/ecommerce/sync', async (req, res) => {
+    const isUp = await engine.ecommerceClient.checkHealth();
+    if (!isUp) {
+      res.status(503).json({
+        status: 'unavailable',
+        message: 'ecommerce-hive-nosql is not responding on port 4000',
+        bridge: engine.ecommerceClient.getStatus(),
+      });
+      return;
+    }
+
+    const pendingOrders = await engine.ecommerceClient.fetchPendingOrders();
+    let count = 0;
+    for (const eOrder of pendingOrders) {
+      if (!engine.world.getOrder(eOrder.order_id)) {
+        engine.ingestEcommerceOrder(eOrder);
+        count++;
+      }
+    }
+
+    res.json({
+      status: 'synced',
+      ordersIngested: count,
+      bridge: engine.ecommerceClient.getStatus(),
+    });
+  });
+
   return router;
 }

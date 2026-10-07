@@ -1,10 +1,11 @@
-import type { SimulationStats } from '../types';
+import type { SimulationStats, EcommerceBridgeStatus } from '../types';
 
 interface StatsBarProps {
   stats: SimulationStats;
+  ecommerceBridge?: EcommerceBridgeStatus;
 }
 
-export function StatsBar({ stats }: StatsBarProps) {
+export function StatsBar({ stats, ecommerceBridge }: StatsBarProps) {
   return (
     <div className="stats-bar">
       <div className="stat-item">
@@ -45,6 +46,22 @@ export function StatsBar({ stats }: StatsBarProps) {
           {stats.totalDistanceKm.toFixed(1)}<span className="stat-unit">km</span>
         </span>
       </div>
+      {ecommerceBridge && (
+        <div className="stat-item">
+          <span className="stat-label">Marketplace Ingest</span>
+          <span className="stat-value mono-font" style={{ color: 'var(--accent-cyan)' }}>
+            {ecommerceBridge.ordersIngestedCount}
+          </span>
+        </div>
+      )}
+      {ecommerceBridge && (
+        <div className="stat-item">
+          <span className="stat-label">Cassandra Pings</span>
+          <span className="stat-value mono-font" style={{ color: 'var(--accent-teal)' }}>
+            {ecommerceBridge.telemetryPingsEmittedCount}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
