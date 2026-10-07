@@ -38,7 +38,9 @@ function ControlRoom() {
   const [incidentModalOpen, setIncidentModalOpen] = useState<boolean>(false);
   const [benchmarkModalOpen, setBenchmarkModalOpen] = useState<boolean>(false);
   const [showTrails, setShowTrails] = useState<boolean>(true);
-  const [showHeatmap, setShowHeatmap] = useState<boolean>(true);
+  const [showHeatmap, setShowHeatmap] = useState<boolean>(false);
+  const [showOrders, setShowOrders] = useState<boolean>(true);
+  const [showLegend, setShowLegend] = useState<boolean>(true);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   const handleStateUpdate = useCallback(
@@ -118,6 +120,10 @@ function ControlRoom() {
         setShowTrails((prev) => !prev);
       } else if (e.key === 'h' || e.key === 'H') {
         setShowHeatmap((prev) => !prev);
+      } else if (e.key === 'o' || e.key === 'O') {
+        setShowOrders((prev) => !prev);
+      } else if (e.key === 'l' || e.key === 'L') {
+        setShowLegend((prev) => !prev);
       } else if (e.key === 'Escape') {
         setSelectedVehicleId(null);
         setIncidentModalOpen(false);
@@ -205,6 +211,8 @@ function ControlRoom() {
         scenarios={scenarios}
         showTrails={showTrails}
         showHeatmap={showHeatmap}
+        showOrders={showOrders}
+        showLegend={showLegend}
         ecommerceBridge={state.ecommerceBridge}
         benchmarkStats={state.benchmarkStats}
         onSpeedChange={setSpeed}
@@ -215,6 +223,8 @@ function ControlRoom() {
         onSelectScenario={loadScenario}
         onToggleTrails={() => setShowTrails((prev) => !prev)}
         onToggleHeatmap={() => setShowHeatmap((prev) => !prev)}
+        onToggleOrders={() => setShowOrders((prev) => !prev)}
+        onToggleLegend={() => setShowLegend((prev) => !prev)}
         onOpenIncidents={() => setIncidentModalOpen(true)}
         onOpenBenchmark={() => setBenchmarkModalOpen(true)}
       />
@@ -230,6 +240,9 @@ function ControlRoom() {
           simTime={state.simTime}
           showTrails={showTrails}
           showHeatmap={showHeatmap}
+          showOrders={showOrders}
+          showLegend={showLegend}
+          onToggleLegend={() => setShowLegend((prev) => !prev)}
         />
 
         {selectedVehicle && (

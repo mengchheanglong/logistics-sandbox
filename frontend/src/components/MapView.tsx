@@ -1,7 +1,7 @@
 import { useMemo, useState, useCallback } from 'react';
 import Map from 'react-map-gl/maplibre';
 import { DeckGL } from '@deck.gl/react';
-import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
+import { ScatterplotLayer, PathLayer, TextLayer } from '@deck.gl/layers';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
 import type { Vehicle, Warehouse, RoadIncident, Order } from '../types';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -19,12 +19,66 @@ const MAP_STYLES = {
   liberty: 'https://tiles.openfreemap.org/styles/liberty',
 };
 
-const STATUS_COLORS: Record<string, [number, number, number, number]> = {
-  idle: [0, 230, 118, 220],       // green
-  en_route: [0, 229, 255, 230],   // vibrant cyan
-  delivering: [255, 145, 0, 230], // orange
-  returning: [100, 181, 246, 220],// light blue
-  broken_down: [255, 23, 68, 240],// red
+// 🚚 FLEET VEHICLE STATUS PALETTE (High-contrast electric colors)
+export const FLEET_STATUS_PALETTE: Record<
+  string,
+  { fill: [number, number, number, number]; hex: string; label: string; icon: string }
+> = {
+  en_route: {
+    fill: [0, 240, 255, 240], // Electric Cyan
+    hex: '#00f0ff',
+    label: 'En Route (Moving)',
+    icon: '⚡',
+  },
+  delivering: {
+    fill: [245, 158, 11, 240], // Bright Amber
+    hex: '#f59e0b',
+    label: 'Delivering (At Stop)',
+    icon: '📦',
+  },
+  returning: {
+    fill: [96, 165, 250, 240], // Cobalt Sky Blue
+    hex: '#60a5fa',
+    label: 'Returning to Depot',
+    icon: '🏢',
+  },
+  idle: {
+    fill: [16, 185, 129, 230], // Emerald Green
+    hex: '#10b981',
+    label: 'Idle at Depot',
+    icon: '🟢',
+  },
+  broken_down: {
+    fill: [239, 68, 68, 250], // Crimson Red
+    hex: '#ef4444',
+    label: 'Broken Down',
+    icon: '🔴',
+  },
+};
+
+// 📦 CUSTOMER ORDER PRIORITY PALETTE (Soft drop pins distinct from vehicle beacons)
+export const ORDER_PRIORITY_PALETTE: Record<
+  string,
+  { fill: [number, number, number, number]; stroke: [number, number, number, number]; hex: string; label: string }
+> = {
+  urgent: {
+    fill: [244, 63, 94, 220], // Rose Pink
+    stroke: [255, 255, 255, 250],
+    hex: '#f43f5e',
+    label: 'Urgent (<30m SLA)',
+  },
+  express: {
+    fill: [249, 115, 22, 200], // Tangerine
+    stroke: [254, 215, 170, 220],
+    hex: '#f97316',
+    label: 'Express (<60m SLA)',
+  },
+  standard: {
+    fill: [56, 189, 248, 160], // Soft Sky Blue
+    stroke: [186, 230, 253, 180],
+    hex: '#38bdf8',
+    label: 'Standard (<120m SLA)',
+  },
 };
 
 interface MapViewProps {
@@ -37,6 +91,9 @@ interface MapViewProps {
   simTime?: number;
   showTrails?: boolean;
   showHeatmap?: boolean;
+  showOrders?: boolean;
+  showLegend?: boolean;
+  onToggleLegend?: () => void;
 }
 
 export function MapView({
@@ -48,10 +105,14 @@ export function MapView({
   onVehicleClick,
   simTime = 0,
   showTrails = true,
-  showHeatmap = true,
+  showHeatmap = false,
+  showOrders = true,
+  showLegend = true,
+  onToggleLegend,
 }: MapViewProps) {
   const [viewState, setViewState] = useState(DEFAULT_CENTER);
   const [mapTheme, setMapTheme] = useState<'dark' | 'liberty'>('dark');
+  const [legendCollapsed, setLegendCollapsed] = useState<boolean>(false);
 
   // Interactive Map Navigation Controls
   const handleZoomIn = () => setViewState((prev) => ({ ...prev, zoom: Math.min(18, prev.zoom + 1) }));
@@ -65,65 +126,95 @@ export function MapView({
   const handleToggleTheme = () =>
     setMapTheme((prev) => (prev === 'dark' ? 'liberty' : 'dark'));
 
-  // Rich Deck.gl Tooltip Renderer
+  // Live Entity Counts for Legend HUD
+  const fleetCounts = useMemo(() => {
+    const counts: Record<string, number> = { en_route: 0, delivering: 0, returning: 0, idle: 0, broken_down: 0 };
+    for (const v of vehicles) {
+      if (counts[v.status] !== undefined) counts[v.status]++;
+    }
+    return counts;
+  }, [vehicles]);
+
+  const orderCounts = useMemo(() => {
+    const counts: Record<string, number> = { urgent: 0, express: 0, standard: 0 };
+    for (const o of orders) {
+      if (o.status === 'pending' || o.status === 'assigned') {
+        const p = o.priority || 'standard';
+        if (counts[p] !== undefined) counts[p]++;
+      }
+    }
+    return counts;
+  }, [orders]);
+
+  // High-Clarity Tooltip Renderer
   const getTooltip = useCallback(
     ({ object }: { object?: any }) => {
       if (!object) return null;
 
-      // 1. Vehicle Tooltip
+      // 1. Fleet Vehicle Tooltip
       if ('capacity_kg' in object && 'driverId' in object) {
         const v = object as Vehicle;
         const loadPercent = Math.min(100, Math.round((v.currentLoad_kg / (v.capacity_kg || 1)) * 100));
+        const statusMeta = FLEET_STATUS_PALETTE[v.status] || FLEET_STATUS_PALETTE.idle;
         return {
           html: `
-            <div style="padding: 8px 10px; background: rgba(13, 13, 21, 0.95); border: 1px solid rgba(0, 229, 255, 0.4); border-radius: 6px; box-shadow: 0 4px 20px rgba(0,0,0,0.6); font-family: monospace; font-size: 11px; color: #e2e8f0; line-height: 1.4;">
-              <div style="font-weight: bold; color: #00e5ff; font-size: 12px; margin-bottom: 4px;">🚚 ${v.id} (${v.type.toUpperCase()})</div>
-              <div>Driver: <span style="color: #94a3b8;">${v.driverId}</span></div>
-              <div>Status: <span style="font-weight: bold; color: ${v.status === 'en_route' ? '#00e5ff' : v.status === 'delivering' ? '#ff9100' : v.status === 'idle' ? '#00e676' : '#ff1744'};">${v.status.toUpperCase()}</span></div>
-              <div>Speed: <span style="color: #38bdf8;">${v.speed_kmh.toFixed(1)} km/h</span></div>
-              <div style="margin-top: 4px;">
+            <div style="padding: 10px 12px; background: rgba(10, 15, 30, 0.96); border: 1px solid rgba(0, 240, 255, 0.5); border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.8); font-family: monospace; font-size: 11px; color: #e2e8f0; line-height: 1.45; min-width: 180px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
+                <span style="font-weight: bold; color: #00f0ff; font-size: 13px;">🚚 ${v.id}</span>
+                <span style="font-size: 10px; background: rgba(0,240,255,0.15); color: #00f0ff; padding: 2px 5px; border-radius: 4px;">${v.type.toUpperCase()}</span>
+              </div>
+              <div>Status: <span style="font-weight: bold; color: ${statusMeta.hex};">${statusMeta.label.toUpperCase()}</span></div>
+              <div>Driver: <span style="color: #cbd5e1;">${v.driverId}</span></div>
+              <div>Speed: <span style="color: #38bdf8; font-weight: bold;">${v.speed_kmh.toFixed(1)} km/h</span></div>
+              <div style="margin-top: 6px;">
                 <div style="display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; margin-bottom: 2px;">
-                  <span>Load: ${v.currentLoad_kg}/${v.capacity_kg}kg</span>
-                  <span>${loadPercent}%</span>
+                  <span>Capacity Load</span>
+                  <span>${v.currentLoad_kg}/${v.capacity_kg} kg (${loadPercent}%)</span>
                 </div>
-                <div style="height: 4px; background: #334155; border-radius: 2px; overflow: hidden;">
-                  <div style="width: ${loadPercent}%; height: 100%; background: ${loadPercent > 80 ? '#f43f5e' : '#00e5ff'};"></div>
+                <div style="height: 5px; background: #1e293b; border-radius: 3px; overflow: hidden;">
+                  <div style="width: ${loadPercent}%; height: 100%; background: ${loadPercent > 80 ? '#f43f5e' : '#00f0ff'};"></div>
                 </div>
               </div>
-              ${v.assignedOrderIds.length > 0 ? `<div style="margin-top: 5px; color: #f59e0b; font-size: 10px;">📦 Assigned: ${v.assignedOrderIds.join(', ')}</div>` : ''}
+              ${v.assignedOrderIds.length > 0 ? `<div style="margin-top: 6px; color: #fbbf24; font-size: 10px;">📦 Carrying Orders: ${v.assignedOrderIds.join(', ')}</div>` : ''}
+              <div style="margin-top: 6px; font-size: 9px; color: #64748b; text-align: right;">Click vehicle to trace corridor</div>
             </div>
           `,
         };
       }
 
-      // 2. Order Tooltip
+      // 2. Customer Order Destination Tooltip
       if ('deliveryLocation' in object && 'priority' in object) {
         const o = object as Order;
-        const priorityColor = o.priority === 'urgent' ? '#ff1744' : o.priority === 'express' ? '#ff9100' : '#38bdf8';
-        const slaColor = o.slaStatus === 'breached' ? '#ff1744' : o.slaStatus === 'at_risk' ? '#f59e0b' : '#00e676';
+        const priorityMeta = ORDER_PRIORITY_PALETTE[o.priority || 'standard'] || ORDER_PRIORITY_PALETTE.standard;
+        const slaColor = o.slaStatus === 'breached' ? '#ef4444' : o.slaStatus === 'at_risk' ? '#f59e0b' : '#10b981';
         return {
           html: `
-            <div style="padding: 8px 10px; background: rgba(13, 13, 21, 0.95); border: 1px solid rgba(255, 145, 0, 0.4); border-radius: 6px; box-shadow: 0 4px 20px rgba(0,0,0,0.6); font-family: monospace; font-size: 11px; color: #e2e8f0; line-height: 1.4;">
-              <div style="font-weight: bold; color: #fbbf24; font-size: 12px; margin-bottom: 4px;">📦 ${o.id}</div>
-              <div>Priority: <span style="font-weight: bold; color: ${priorityColor}; text-transform: uppercase;">${o.priority} (${o.slaDurationMin || 120}m)</span></div>
-              <div>SLA: <span style="font-weight: bold; color: ${slaColor}; text-transform: uppercase;">${o.slaStatus || 'ON TIME'}</span></div>
-              <div>Weight: <span style="color: #94a3b8;">${o.totalWeight_kg.toFixed(1)} kg</span></div>
-              <div>Status: <span style="color: #94a3b8; text-transform: uppercase;">${o.status}</span></div>
+            <div style="padding: 10px 12px; background: rgba(15, 10, 25, 0.96); border: 1px solid rgba(244, 63, 94, 0.5); border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.8); font-family: monospace; font-size: 11px; color: #e2e8f0; line-height: 1.45; min-width: 170px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
+                <span style="font-weight: bold; color: #fbbf24; font-size: 13px;">📦 ${o.id}</span>
+                <span style="font-size: 10px; background: rgba(244,63,94,0.15); color: ${priorityMeta.hex}; padding: 2px 5px; border-radius: 4px; font-weight: bold;">${o.priority?.toUpperCase()}</span>
+              </div>
+              <div>Entity: <span style="color: #a855f7; font-weight: bold;">Customer Drop Point</span></div>
+              <div>Target SLA: <span style="color: #cbd5e1;">${o.slaDurationMin || 120} min</span></div>
+              <div>SLA Health: <span style="font-weight: bold; color: ${slaColor};">${(o.slaStatus || 'on_time').toUpperCase()}</span></div>
+              <div>Package Weight: <span style="color: #cbd5e1;">${o.totalWeight_kg.toFixed(1)} kg</span></div>
+              <div>State: <span style="color: ${o.status === 'assigned' ? '#00f0ff' : '#94a3b8'}; text-transform: uppercase; font-weight: bold;">${o.status}</span></div>
             </div>
           `,
         };
       }
 
-      // 3. Depot Tooltip
+      // 3. Distribution Depot Tooltip
       if ('type' in object && (object.type === 'depot' || object.type === 'warehouse')) {
         const w = object as Warehouse;
         return {
           html: `
-            <div style="padding: 8px 10px; background: rgba(13, 13, 21, 0.95); border: 1px solid rgba(168, 85, 247, 0.4); border-radius: 6px; box-shadow: 0 4px 20px rgba(0,0,0,0.6); font-family: monospace; font-size: 11px; color: #e2e8f0; line-height: 1.4;">
-              <div style="font-weight: bold; color: #c084fc; font-size: 12px; margin-bottom: 4px;">🏢 ${w.name}</div>
-              <div>ID: <span style="color: #94a3b8;">${w.id}</span></div>
-              <div>Status: <span style="font-weight: bold; color: ${w.status === 'closed' ? '#f43f5e' : '#10b981'};">${(w.status || 'open').toUpperCase()}</span></div>
-              <div>Capacity: <span style="color: #94a3b8;">${w.capacity.toLocaleString()} units</span></div>
+            <div style="padding: 10px 12px; background: rgba(25, 12, 38, 0.96); border: 1px solid rgba(168, 85, 247, 0.6); border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.8); font-family: monospace; font-size: 11px; color: #e2e8f0; line-height: 1.45; min-width: 170px;">
+              <div style="font-weight: bold; color: #d8b4fe; font-size: 13px; margin-bottom: 4px;">🏢 ${w.name} Hub</div>
+              <div>Entity: <span style="color: #c084fc; font-weight: bold;">Primary Fleet Base</span></div>
+              <div>Hub ID: <span style="color: #94a3b8;">${w.id}</span></div>
+              <div>Status: <span style="font-weight: bold; color: ${w.status === 'closed' ? '#ef4444' : '#10b981'};">${(w.status || 'open').toUpperCase()}</span></div>
+              <div>Hub Capacity: <span style="color: #cbd5e1;">${w.capacity.toLocaleString()} packages</span></div>
             </div>
           `,
         };
@@ -134,11 +225,11 @@ export function MapView({
         const inc = object as RoadIncident;
         return {
           html: `
-            <div style="padding: 8px 10px; background: rgba(26, 10, 10, 0.95); border: 1px solid rgba(239, 68, 68, 0.6); border-radius: 6px; box-shadow: 0 4px 20px rgba(0,0,0,0.6); font-family: monospace; font-size: 11px; color: #fecdd3; line-height: 1.4;">
-              <div style="font-weight: bold; color: #f87171; font-size: 12px; margin-bottom: 4px;">⚠️ ${inc.description}</div>
-              <div>Type: <span style="text-transform: uppercase; color: #fca5a5;">${inc.type}</span></div>
+            <div style="padding: 10px 12px; background: rgba(30, 10, 15, 0.96); border: 1px solid rgba(239, 68, 68, 0.7); border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.8); font-family: monospace; font-size: 11px; color: #fecdd3; line-height: 1.45;">
+              <div style="font-weight: bold; color: #f87171; font-size: 13px; margin-bottom: 4px;">⚠️ ${inc.description}</div>
+              <div>Hazard: <span style="text-transform: uppercase; color: #fca5a5;">${inc.type}</span></div>
               <div>Severity: <span style="font-weight: bold; text-transform: uppercase; color: #ef4444;">${inc.severity}</span></div>
-              <div>Radius: <span style="color: #cbd5e1;">${inc.radiusM}m zone</span></div>
+              <div>Block Zone: <span style="color: #cbd5e1;">${inc.radiusM}m road perimeter</span></div>
             </div>
           `,
         };
@@ -150,22 +241,49 @@ export function MapView({
   );
 
   const layers = useMemo(() => {
-    // 1. Demand Density Heatmap
+    // 1. Demand Density Heatmap (Sleek dark operations density gradient)
     const heatmapLayer = new HeatmapLayer({
       id: 'demand-heatmap-layer',
       data: orders.filter((o) => o.status === 'pending' || o.status === 'assigned'),
       getPosition: (d: Order) => [d.deliveryLocation.lon, d.deliveryLocation.lat],
       getWeight: (d: Order) => (d.priority === 'urgent' ? 4 : d.priority === 'express' ? 2 : 1),
-      radiusPixels: 45,
-      intensity: 1.3,
-      threshold: 0.05,
+      radiusPixels: 32,
+      intensity: 0.85,
+      threshold: 0.08,
+      colorRange: [
+        [30, 27, 75, 40],   // subtle indigo
+        [79, 70, 229, 120], // royal violet
+        [6, 182, 212, 160], // vivid cyan
+        [245, 158, 11, 200],// amber
+        [239, 68, 68, 240], // crimson hotspot
+      ],
       visible: showHeatmap,
       updateTriggers: {
         getWeight: [orders.length],
       },
     });
 
-    // 2a. Vehicle Trail Glow Halo (Neon cyan / amber glow trailing moving vehicles)
+    // 2. Planned Route paths for vehicles (subtle ambient paths, bold highlight for selected)
+    const routeLayer = new PathLayer({
+      id: 'routes-layer',
+      data: vehicles.filter((v) => v.routeGeometry && v.routeGeometry.length > 1),
+      pickable: false,
+      widthScale: 1,
+      widthMinPixels: 1.5,
+      widthMaxPixels: 6,
+      getPath: (d: Vehicle) => d.routeGeometry,
+      getColor: (d: Vehicle) =>
+        d.id === selectedVehicleId
+          ? [0, 240, 255, 240] // Vivid cyan highlighted corridor
+          : [70, 130, 210, 35], // Faint subtle ambient road network
+      getWidth: (d: Vehicle) => (d.id === selectedVehicleId ? 3.5 : 1.5),
+      updateTriggers: {
+        getColor: [selectedVehicleId],
+        getWidth: [selectedVehicleId],
+      },
+    });
+
+    // 3a. Vehicle Animated Glowing Trail Halo (Neon wake trailing behind moving vehicles)
     const trailGlowLayer = new PathLayer({
       id: 'vehicle-trail-glow-layer',
       data: vehicles.filter(
@@ -194,10 +312,10 @@ export function MapView({
       },
       getColor: (d: Vehicle) =>
         d.status === 'delivering'
-          ? [255, 145, 0, 140]
+          ? [245, 158, 11, 140]
           : d.status === 'returning'
-          ? [59, 130, 246, 120]
-          : [0, 229, 255, 150],
+          ? [96, 165, 250, 120]
+          : [0, 240, 255, 150],
       getWidth: 8,
       visible: showTrails,
       updateTriggers: {
@@ -207,7 +325,7 @@ export function MapView({
       },
     });
 
-    // 2b. Vehicle Trail Core (Electric white/cyan focused beam inside glow)
+    // 3b. Vehicle Trail Core Beam (Crisp electric white/cyan core running through the halo)
     const trailCoreLayer = new PathLayer({
       id: 'vehicle-trail-core-layer',
       data: vehicles.filter(
@@ -249,26 +367,6 @@ export function MapView({
       },
     });
 
-    // 3. Planned Route paths for vehicles (subtle ambient paths, highlighted for selected vehicle)
-    const routeLayer = new PathLayer({
-      id: 'routes-layer',
-      data: vehicles.filter((v) => v.routeGeometry && v.routeGeometry.length > 1),
-      pickable: false,
-      widthScale: 1,
-      widthMinPixels: 1.5,
-      widthMaxPixels: 6,
-      getPath: (d: Vehicle) => d.routeGeometry,
-      getColor: (d: Vehicle) =>
-        d.id === selectedVehicleId
-          ? [0, 229, 255, 230]
-          : [41, 121, 255, 30],
-      getWidth: (d: Vehicle) => (d.id === selectedVehicleId ? 3.5 : 1.5),
-      updateTriggers: {
-        getColor: [selectedVehicleId],
-        getWidth: [selectedVehicleId],
-      },
-    });
-
     // 4. Road Incident Hazard Zones
     const incidentLayer = new ScatterplotLayer({
       id: 'incidents-layer',
@@ -279,8 +377,8 @@ export function MapView({
       filled: true,
       radiusUnits: 'meters',
       getRadius: (d: RoadIncident) => d.radiusM,
-      getFillColor: [255, 30, 30, 75],
-      getLineColor: [255, 50, 50, 240],
+      getFillColor: [239, 68, 68, 75],
+      getLineColor: [248, 113, 113, 240],
       getLineWidth: 2,
       lineWidthMinPixels: 2,
       updateTriggers: {
@@ -288,7 +386,7 @@ export function MapView({
       },
     });
 
-    // 5. Active Order Delivery Pins
+    // 5. Customer Delivery Order Drop Pins (Smaller targets, distinct from vehicles)
     const orderLayer = new ScatterplotLayer({
       id: 'orders-layer',
       data: orders.filter((o) => o.status === 'pending' || o.status === 'assigned'),
@@ -296,64 +394,103 @@ export function MapView({
       opacity: 0.85,
       stroked: true,
       filled: true,
-      radiusMinPixels: 3.5,
-      radiusMaxPixels: 8,
+      radiusMinPixels: 3,
+      radiusMaxPixels: 6.5,
       lineWidthMinPixels: 1.5,
       getPosition: (d: Order) => [d.deliveryLocation.lon, d.deliveryLocation.lat],
-      getFillColor: (d: Order) =>
-        d.priority === 'urgent'
-          ? [255, 23, 68, 230]
-          : d.priority === 'express'
-          ? [255, 145, 0, 210]
-          : [41, 121, 255, 180],
-      getLineColor: (d: Order) =>
-        d.slaStatus === 'breached'
-          ? [255, 23, 68, 255]
-          : d.slaStatus === 'at_risk'
-          ? [255, 235, 59, 255]
-          : [255, 255, 255, 200],
+      getFillColor: (d: Order) => {
+        const meta = ORDER_PRIORITY_PALETTE[d.priority || 'standard'] || ORDER_PRIORITY_PALETTE.standard;
+        // If order is already assigned, soften opacity
+        if (d.status === 'assigned') {
+          return [meta.fill[0], meta.fill[1], meta.fill[2], 110];
+        }
+        return meta.fill;
+      },
+      getLineColor: (d: Order) => {
+        if (d.status === 'assigned') {
+          return [0, 240, 255, 220]; // Cyan ring for assigned
+        }
+        const meta = ORDER_PRIORITY_PALETTE[d.priority || 'standard'] || ORDER_PRIORITY_PALETTE.standard;
+        return meta.stroke;
+      },
+      visible: showOrders,
       updateTriggers: {
-        getFillColor: [orders.map((o) => o.priority).join(',')],
-        getLineColor: [orders.map((o) => o.slaStatus).join(',')],
+        getFillColor: [orders.map((o) => `${o.id}:${o.status}:${o.priority}`).join(',')],
+        getLineColor: [orders.map((o) => `${o.id}:${o.status}`).join(',')],
+        visible: [showOrders],
       },
     });
 
-    // 6. Warehouse/depot markers
-    const warehouseLayer = new ScatterplotLayer({
-      id: 'warehouses-layer',
+    // 6a. Distribution Hub Glowing Base Halo (Large distinct purple beacon)
+    const warehouseHaloLayer = new ScatterplotLayer({
+      id: 'warehouses-halo-layer',
       data: warehouses,
-      pickable: true,
+      pickable: false,
       opacity: 0.9,
       stroked: true,
       filled: true,
-      radiusMinPixels: 8,
-      radiusMaxPixels: 20,
-      lineWidthMinPixels: 2,
-      getPosition: (d: Warehouse) => [d.position.lon, d.position.lat] as [number, number],
-      getFillColor: [156, 39, 176, 200],
-      getLineColor: [255, 255, 255, 200],
+      radiusMinPixels: 13,
+      radiusMaxPixels: 26,
+      lineWidthMinPixels: 2.5,
+      getPosition: (d: Warehouse) => [d.position.lon, d.position.lat],
+      getFillColor: [147, 51, 234, 90],
+      getLineColor: [216, 180, 254, 240],
     });
 
-    // 7. Vehicle markers
-    const vehicleLayer = new ScatterplotLayer({
-      id: 'vehicles-layer',
+    // 6b. Distribution Hub Center Core Dot
+    const warehouseCoreLayer = new ScatterplotLayer({
+      id: 'warehouses-core-layer',
+      data: warehouses,
+      pickable: true,
+      opacity: 1,
+      stroked: true,
+      filled: true,
+      radiusMinPixels: 5,
+      radiusMaxPixels: 9,
+      lineWidthMinPixels: 1.5,
+      getPosition: (d: Warehouse) => [d.position.lon, d.position.lat],
+      getFillColor: [255, 255, 255, 255],
+      getLineColor: [168, 85, 247, 240],
+    });
+
+    // 6c. Distribution Hub On-Map Text Labels
+    const depotLabelLayer = new TextLayer({
+      id: 'depot-labels-layer',
+      data: warehouses,
+      getPosition: (d: Warehouse) => [d.position.lon, d.position.lat],
+      getText: (d: Warehouse) => `🏢 ${d.name} Hub`,
+      getSize: 11,
+      getColor: [243, 232, 255, 255],
+      getTextAnchor: 'middle',
+      getAlignmentBaseline: 'top',
+      getPixelOffset: [0, 18],
+      backgroundColor: [15, 23, 42, 230],
+      backgroundPadding: [6, 3, 6, 3],
+      fontFamily: 'monospace',
+      fontWeight: 'bold',
+      characterSet: 'auto',
+    });
+
+    // 7a. Vehicle Beacon Outer Status Halo (Double-ring Navigation Transponder)
+    const vehicleBeaconLayer = new ScatterplotLayer({
+      id: 'vehicles-beacon-layer',
       data: vehicles,
       pickable: true,
       opacity: 1,
       stroked: true,
       filled: true,
-      radiusMinPixels: 4,
-      radiusMaxPixels: 12,
-      lineWidthMinPixels: 1.5,
-      getPosition: (d: Vehicle) => [d.position.lon, d.position.lat] as [number, number],
-      getFillColor: (d: Vehicle) => STATUS_COLORS[d.status] ?? [150, 150, 150, 200],
+      radiusMinPixels: 6.5,
+      radiusMaxPixels: 14,
+      lineWidthMinPixels: 2,
+      getPosition: (d: Vehicle) => [d.position.lon, d.position.lat],
+      getFillColor: (d: Vehicle) => FLEET_STATUS_PALETTE[d.status]?.fill ?? [150, 150, 150, 200],
       getLineColor: (d: Vehicle) =>
         d.id === selectedVehicleId
           ? [255, 255, 255, 255]
           : d.rerouteCount && d.rerouteCount > 0
-          ? [0, 229, 255, 220]
-          : [0, 0, 0, 120],
-      getLineWidth: (d: Vehicle) => (d.id === selectedVehicleId ? 3.5 : d.rerouteCount && d.rerouteCount > 0 ? 2 : 1),
+          ? [0, 240, 255, 240]
+          : [15, 23, 42, 240],
+      getLineWidth: (d: Vehicle) => (d.id === selectedVehicleId ? 3.5 : 2),
       onClick: (info) => {
         if (info.object) {
           onVehicleClick((info.object as Vehicle).id);
@@ -362,7 +499,48 @@ export function MapView({
       updateTriggers: {
         getFillColor: [vehicles.map((v) => v.status).join(',')],
         getLineColor: [selectedVehicleId, vehicles.map((v) => v.rerouteCount || 0).join(',')],
-        getLineWidth: [selectedVehicleId, vehicles.map((v) => v.rerouteCount || 0).join(',')],
+        getLineWidth: [selectedVehicleId],
+      },
+    });
+
+    // 7b. Vehicle Transponder Core (Bright white center dot giving GPS Rover appearance)
+    const vehicleCoreLayer = new ScatterplotLayer({
+      id: 'vehicles-core-layer',
+      data: vehicles,
+      pickable: false,
+      opacity: 1,
+      stroked: true,
+      filled: true,
+      radiusMinPixels: 2.5,
+      radiusMaxPixels: 5,
+      lineWidthMinPixels: 1,
+      getPosition: (d: Vehicle) => [d.position.lon, d.position.lat],
+      getFillColor: [255, 255, 255, 255],
+      getLineColor: [15, 23, 42, 180],
+      updateTriggers: {
+        getPosition: [vehicles.map((v) => `${v.position.lon.toFixed(4)},${v.position.lat.toFixed(4)}`).join(',')],
+      },
+    });
+
+    // 7c. Selected Vehicle Floating Tag
+    const selectedVehicleLabelLayer = new TextLayer({
+      id: 'selected-vehicle-label-layer',
+      data: vehicles.filter((v) => v.id === selectedVehicleId),
+      getPosition: (d: Vehicle) => [d.position.lon, d.position.lat],
+      getText: (d: Vehicle) => `🚚 ${d.id} • ${d.status.toUpperCase()} (${d.speed_kmh.toFixed(0)} km/h)`,
+      getSize: 11,
+      getColor: [0, 240, 255, 255],
+      getTextAnchor: 'middle',
+      getAlignmentBaseline: 'bottom',
+      getPixelOffset: [0, -18],
+      backgroundColor: [6, 18, 36, 240],
+      backgroundPadding: [6, 3, 6, 3],
+      fontFamily: 'monospace',
+      fontWeight: 'bold',
+      characterSet: 'auto',
+      updateTriggers: {
+        getText: [vehicles.find((v) => v.id === selectedVehicleId)?.status, vehicles.find((v) => v.id === selectedVehicleId)?.speed_kmh],
+        getPosition: [vehicles.find((v) => v.id === selectedVehicleId)?.position.lat],
       },
     });
 
@@ -373,8 +551,12 @@ export function MapView({
       trailCoreLayer,
       incidentLayer,
       orderLayer,
-      warehouseLayer,
-      vehicleLayer,
+      warehouseHaloLayer,
+      warehouseCoreLayer,
+      depotLabelLayer,
+      vehicleBeaconLayer,
+      vehicleCoreLayer,
+      selectedVehicleLabelLayer,
     ];
   }, [
     vehicles,
@@ -385,6 +567,7 @@ export function MapView({
     simTime,
     showTrails,
     showHeatmap,
+    showOrders,
     onVehicleClick,
   ]);
 
@@ -443,16 +626,141 @@ export function MapView({
         </button>
       </div>
 
-      {/* Map Legend Chip */}
-      <div className="absolute bottom-5 left-5 z-20 hidden md:flex items-center gap-3 bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-800 text-[11px] font-mono text-slate-300 shadow-xl pointer-events-none">
-        <span className="text-slate-500 font-bold uppercase text-[10px]">Fleet:</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#00e5ff]"></span>En Route</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#ff9100]"></span>Delivering</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#00e676]"></span>Idle</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#ff1744]"></span>Broken Down</span>
-        <span className="text-slate-600">|</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#a855f7]"></span>Depot</span>
-      </div>
+      {/* Comprehensive Tactical Symbology Legend HUD */}
+      {showLegend && (
+        <div className="absolute bottom-5 left-5 z-20 bg-slate-950/92 backdrop-blur-md border border-slate-800 rounded-xl shadow-2xl p-3 max-w-[340px] text-xs font-mono select-none transition-all">
+          <div className="flex items-center justify-between border-b border-slate-800/80 pb-2 mb-2.5">
+            <div className="flex items-center gap-1.5 font-bold text-slate-200 text-xs">
+              <span className="text-cyan-400">🎯</span> Tactical Map Legend
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
+                {vehicles.length} Units
+              </span>
+              <button
+                onClick={() => setLegendCollapsed((prev) => !prev)}
+                className="w-5 h-5 flex items-center justify-center rounded bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 text-[10px] cursor-pointer"
+                title={legendCollapsed ? 'Expand Legend' : 'Collapse Legend'}
+              >
+                {legendCollapsed ? '▲' : '▼'}
+              </button>
+              {onToggleLegend && (
+                <button
+                  onClick={onToggleLegend}
+                  className="w-5 h-5 flex items-center justify-center rounded bg-slate-900 text-slate-400 hover:text-rose-400 hover:bg-slate-800 text-[10px] cursor-pointer"
+                  title="Close Legend HUD"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {!legendCollapsed ? (
+            <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
+              {/* Category 1: Fleet Transponders */}
+              <div>
+                <div className="text-[10px] uppercase font-bold text-cyan-400 mb-1.5 flex items-center justify-between">
+                  <span>🚚 Fleet Transponders (Vehicles)</span>
+                  <span className="text-slate-500 text-[9px]">Double Ring</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-slate-300">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#00f0ff] ring-1 ring-white/50 shrink-0"></span>
+                    <span className="truncate">En Route ({fleetCounts.en_route})</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b] ring-1 ring-white/50 shrink-0"></span>
+                    <span className="truncate">Delivering ({fleetCounts.delivering})</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#60a5fa] ring-1 ring-white/50 shrink-0"></span>
+                    <span className="truncate">Returning ({fleetCounts.returning})</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#10b981] ring-1 ring-white/50 shrink-0"></span>
+                    <span className="truncate">Idle ({fleetCounts.idle})</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 col-span-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444] ring-1 ring-white/50 shrink-0"></span>
+                    <span className="truncate">Broken Down ({fleetCounts.broken_down})</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Category 2: Customer Delivery Orders */}
+              <div className="border-t border-slate-800/80 pt-2">
+                <div className="text-[10px] uppercase font-bold text-amber-400 mb-1.5 flex items-center justify-between">
+                  <span>📦 Customer Drop Points (Orders)</span>
+                  <span className="text-slate-500 text-[9px]">Small Pin</span>
+                </div>
+                <div className="grid grid-cols-1 gap-1 text-[11px] text-slate-300">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-[#f43f5e] shrink-0"></span>
+                      <span>Urgent SLA (&lt;30m)</span>
+                    </span>
+                    <span className="text-[10px] text-rose-400 font-bold">{orderCounts.urgent}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-[#f97316] shrink-0"></span>
+                      <span>Express SLA (&lt;60m)</span>
+                    </span>
+                    <span className="text-[10px] text-orange-400 font-bold">{orderCounts.express}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-[#38bdf8] shrink-0"></span>
+                      <span>Standard SLA (&lt;120m)</span>
+                    </span>
+                    <span className="text-[10px] text-sky-400 font-bold">{orderCounts.standard}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Category 3: Infrastructure & Visual Layers */}
+              <div className="border-t border-slate-800/80 pt-2 text-[10px] text-slate-400 space-y-1">
+                <div className="text-[10px] uppercase font-bold text-purple-400 mb-1">
+                  🏢 Infrastructure & Visual Layers
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#a855f7] ring-2 ring-purple-300 shrink-0"></span>
+                  <span className="text-slate-300">Depot Hubs (Depot A & Depot B)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-0.5 bg-gradient-to-r from-cyan-400 to-transparent shrink-0"></span>
+                  <span>Vehicle Motion Comet Trails (Speed vectors)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-0.5 bg-cyan-400 shrink-0"></span>
+                  <span>Selected Vehicle Planned Route Corridor</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-amber-500 to-rose-500 shrink-0"></span>
+                  <span>Demand Heatmap Density Clusters</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-red-500/40 border border-red-500 shrink-0"></span>
+                  <span>Monsoon Flooding / Road Hazard Perimeter</span>
+                </div>
+              </div>
+
+              {/* Bottom Quick Tip */}
+              <div className="border-t border-slate-800/80 pt-1.5 text-[9px] text-slate-500 flex justify-between">
+                <span>Tip: Click vehicle to track</span>
+                <span>[O] Orders • [T] Trails • [H] Heat</span>
+              </div>
+            </div>
+          ) : (
+            <div className="text-[10px] text-slate-400 flex items-center justify-between">
+              <span>Fleet: <b className="text-cyan-400">{fleetCounts.en_route} Active</b></span>
+              <span>Orders: <b className="text-amber-400">{orders.length}</b></span>
+              <span className="text-[9px] text-slate-500">Click ▲ to expand</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

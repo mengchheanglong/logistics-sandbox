@@ -9,6 +9,8 @@ interface ControlBarProps {
   scenarios?: Array<{ id: string; name: string; description?: string }>;
   showTrails?: boolean;
   showHeatmap?: boolean;
+  showOrders?: boolean;
+  showLegend?: boolean;
   ecommerceBridge?: EcommerceBridgeStatus;
   benchmarkStats?: AlgorithmBenchmarkStats;
   onSpeedChange: (speed: SpeedSetting) => void;
@@ -19,6 +21,8 @@ interface ControlBarProps {
   onSelectScenario?: (scenarioId: string) => void;
   onToggleTrails?: () => void;
   onToggleHeatmap?: () => void;
+  onToggleOrders?: () => void;
+  onToggleLegend?: () => void;
   onOpenIncidents?: () => void;
   onOpenBenchmark?: () => void;
 }
@@ -39,6 +43,8 @@ export function ControlBar({
   scenarios = [],
   showTrails = true,
   showHeatmap = true,
+  showOrders = true,
+  showLegend = true,
   ecommerceBridge,
   benchmarkStats,
   onSpeedChange,
@@ -49,6 +55,8 @@ export function ControlBar({
   onSelectScenario,
   onToggleTrails,
   onToggleHeatmap,
+  onToggleOrders,
+  onToggleLegend,
   onOpenIncidents,
   onOpenBenchmark,
 }: ControlBarProps) {
@@ -134,6 +142,20 @@ export function ControlBar({
             </button>
           )}
 
+          {onToggleOrders && (
+            <button
+              onClick={onToggleOrders}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
+                showOrders
+                  ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40 shadow-[0_0_8px_rgba(56,189,248,0.25)]'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+              title="Toggle Customer Delivery Order Pins"
+            >
+              <span className="leading-none">📦</span> Orders
+            </button>
+          )}
+
           {onToggleHeatmap && (
             <button
               onClick={onToggleHeatmap}
@@ -145,6 +167,20 @@ export function ControlBar({
               title="Toggle Demand Density Heatmap (HeatmapLayer)"
             >
               <span className="leading-none">🔥</span> Heatmap
+            </button>
+          )}
+
+          {onToggleLegend && (
+            <button
+              onClick={onToggleLegend}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
+                showLegend
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-[0_0_8px_rgba(168,85,247,0.25)]'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+              title="Toggle Visual Symbology & Color Legend HUD"
+            >
+              <span className="leading-none">🎯</span> Legend
             </button>
           )}
         </div>
