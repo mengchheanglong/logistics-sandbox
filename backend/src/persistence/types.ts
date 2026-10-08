@@ -7,7 +7,7 @@
  * - In-Memory fast key-value caches for real-time fleet snapshots
  */
 
-import { Coordinate, Order, OrderStatus, Vehicle } from '../world/types.js';
+import { Coordinate, Customer, Driver, Order, OrderStatus, Vehicle, Warehouse } from '../world/types.js';
 
 /**
  * Cassandra-compatible telemetry ping record matching the rider_gps_pings table schema.
@@ -124,11 +124,49 @@ export interface IScenarioRepository {
   getStatus(): { driver: string; healthy: boolean; count: number };
 }
 
+export interface GraphNode {
+  id: string;
+  label: 'Warehouse' | 'Depot' | 'Vehicle' | 'Driver' | 'Order' | 'Customer';
+  properties: Record<string, any>;
+}
+
+export interface GraphRelationship {
+  id: string;
+  type: 'FEEDS' | 'DISPATCHES' | 'ASSIGNED_TO' | 'CARRIES' | 'DELIVERS_TO' | 'REFERRED';
+  from: string;
+  to: string;
+  properties?: Record<string, any>;
+}
+
+export interface ImpactAnalysisResult {
+  targetEntity: { type: string; id: string; name?: string; status?: string };
+  impactedVehicles: Array<{ id: string; name: string; type: string; status: string; driverName?: string; currentLoad_kg: number }>;
+  impactedOrders: Array<{ id: string; status: string; priority?: string; customerId: string; customerName?: string; totalWeight_kg: number }>;
+  impactedCustomers: Array<{ id: string; name: string; address?: string }>;
+  totalOrdersAtRisk: number;
+  totalPayloadKg: number;
+  estimatedRevenueAtRiskUSD: number;
+  traversalTimeMs: number;
+  cypherQuery: string;
+}
+
+export interface IRelationshipRepository {
+  syncTopology(warehouses: Warehouse[], vehicles: Vehicle[], drivers: Driver[]): Promise<void>;
+  syncOrder(order: Order, vehicleId?: string | null, customer?: Customer): Promise<void>;
+  updateOrderStatus(orderId: string, status: OrderStatus): Promise<void>;
+  updateVehicleStatus(vehicleId: string, status: string, pos?: Coordinate): Promise<void>;
+  getImpactAnalysis(entityType: 'depot' | 'vehicle' | 'warehouse', entityId: string): Promise<ImpactAnalysisResult>;
+  getGraphTopology(): Promise<{ nodes: GraphNode[]; relationships: GraphRelationship[] }>;
+  executeCypher(cypher: string, params?: Record<string, any>): Promise<any>;
+  getStatus(): { driver: string; healthy: boolean; nodeCount: number; relationshipCount: number; url: string };
+}
+
 export interface IPersistenceLayer {
   telemetry: ITelemetryRepository;
   orders: IOrderRepository;
   vehicles: IVehicleRepository;
   scenarios: IScenarioRepository;
+  relationships: IRelationshipRepository;
   driverType: 'in-memory' | 'cassandra' | 'mongodb' | 'polyglot';
   getStatus(): {
     driverType: string;
@@ -136,5 +174,6 @@ export interface IPersistenceLayer {
     orders: { driver: string; healthy: boolean; orderCount: number };
     vehicles: { driver: string; healthy: boolean; vehicleCount: number };
     scenarios: { driver: string; healthy: boolean; count: number };
+    relationships: { driver: string; healthy: boolean; nodeCount: number; relationshipCount: number; url: string };
   };
 }

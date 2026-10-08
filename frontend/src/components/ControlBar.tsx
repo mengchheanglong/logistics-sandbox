@@ -26,6 +26,7 @@ interface ControlBarProps {
   onOpenAnalytics?: () => void;
   onOpenIncidents?: () => void;
   onOpenBenchmark?: () => void;
+  onOpenGraph?: () => void;
 }
 
 const SPEEDS: { label: string; value: SpeedSetting }[] = [
@@ -61,6 +62,7 @@ export function ControlBar({
   onOpenAnalytics,
   onOpenIncidents,
   onOpenBenchmark,
+  onOpenGraph,
 }: ControlBarProps) {
   const defaultPresets = [
     { id: 'morning_delivery', name: 'Morning Delivery' },
@@ -267,6 +269,16 @@ export function ControlBar({
             title="Open Algorithm Test Bench & Analytics"
           >
             <span className="leading-none">🧪</span> Bench
+          </button>
+        )}
+
+        {onOpenGraph && (
+          <button
+            onClick={onOpenGraph}
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-purple-950/60 text-purple-300 border border-purple-600/50 hover:bg-purple-900/60 hover:border-purple-400 whitespace-nowrap transition-all cursor-pointer shadow-[0_0_10px_rgba(168,85,247,0.15)]"
+            title="Open Neo4j Graph Intelligence & Incident Impact Simulator (Phase 3)"
+          >
+            <span className="leading-none">☊</span> Neo4j Graph
           </button>
         )}
 

@@ -170,6 +170,13 @@ export class SimulationEngine {
       }
     });
 
+    // Synchronize initial topology into Neo4j Relationship Graph
+    this.persistence.relationships.syncTopology(
+      this.world.getAllWarehouses(),
+      this.world.getAllVehicles(),
+      this.world.getAllDrivers()
+    ).catch(() => {});
+
     // Ensure orders are seeded when starting
     if (this.world.getAllOrders().length === 0) {
       this.seedInitialOrders(20);
@@ -546,6 +553,7 @@ export class SimulationEngine {
                 order.status = 'assigned';
                 order.assignedVehicleId = vehicle.id;
                 order.assignedAt = this.clock.getSimulatedTime();
+                this.persistence.relationships.syncOrder(order, vehicle.id).catch(() => {});
                 this.ecommerceClient.updateOrderStatus(order.id, 'Out for Delivery', vehicle.driverId);
               }
               // Remove from queue
@@ -617,6 +625,9 @@ export class SimulationEngine {
             order.assignedAt = this.clock.getSimulatedTime();
             order.estimatedDeliveryTime =
               this.clock.getSimulatedTime() + result.route.durationS * 1000;
+
+            // Synchronize into Neo4j Relationship Graph
+            this.persistence.relationships.syncOrder(order, vehicle.id).catch(() => {});
 
             // Update upstream ecommerce-hive-nosql status (Out for Delivery)
             this.ecommerceClient.updateOrderStatus(order.id, 'Out for Delivery', vehicle.driverId);
@@ -780,6 +791,7 @@ export class SimulationEngine {
           order.deliveredAt = simTime;
           vehicle.currentLoad_kg = Math.max(0, vehicle.currentLoad_kg - order.totalWeight_kg);
           this.persistence.orders.updateOrderStatus(order.id, 'delivered', simTime).catch(() => {});
+          this.persistence.relationships.updateOrderStatus(order.id, 'delivered').catch(() => {});
           this.ecommerceClient.updateOrderStatus(order.id, 'Delivered', vehicle.driverId);
 
           this.emitEvent('order', order.id, 'order.delivered', {
@@ -828,6 +840,7 @@ export class SimulationEngine {
           order.status = 'delivered';
           order.deliveredAt = simTime;
           this.persistence.orders.updateOrderStatus(orderId, 'delivered', simTime).catch(() => {});
+          this.persistence.relationships.updateOrderStatus(orderId, 'delivered').catch(() => {});
 
           // Notify upstream marketplace that order is Delivered
           this.ecommerceClient.updateOrderStatus(orderId, 'Delivered', vehicle.driverId);
@@ -1364,6 +1377,15 @@ export class SimulationEngine {
         vehicle.status = 'broken_down';
         vehicle.speed_kmh = 0;
 
+        // Update Neo4j Graph & compute impact cascade
+        this.persistence.relationships.updateVehicleStatus(vehicle.id, 'broken_down', vehicle.position).catch(() => {});
+        this.persistence.relationships.getImpactAnalysis('vehicle', vehicle.id).then((impact) => {
+          this.emitEvent('incident', vehicle.id, 'incident.impact_analyzed', {
+            impact,
+            source: 'neo4j_relationship_graph',
+          });
+        }).catch(() => {});
+
         // Reassign in-transit orders back to pending
         let reallocated = 0;
         if (vehicle.assignedOrderIds.length > 0) {
@@ -1391,6 +1413,7 @@ export class SimulationEngine {
         if (!vehicle) return { success: false, message: 'Vehicle not found' };
 
         this.resetVehicleToIdle(vehicle);
+        this.persistence.relationships.updateVehicleStatus(vehicle.id, 'idle', vehicle.position).catch(() => {});
         this.emitEvent('vehicle', vehicle.id, 'vehicle.recovered', {
           reason: 'operator_intervention',
         });
@@ -1403,6 +1426,14 @@ export class SimulationEngine {
         if (!depot) return { success: false, message: 'Depot not found' };
 
         depot.status = 'closed';
+
+        // Run Neo4j cascade impact analysis before rehoming
+        this.persistence.relationships.getImpactAnalysis('depot', depot.id).then((impact) => {
+          this.emitEvent('incident', depot.id, 'incident.impact_analyzed', {
+            impact,
+            source: 'neo4j_relationship_graph',
+          });
+        }).catch(() => {});
 
         // Re-home stationed idle vehicles to another open depot
         const openDepot = this.world.getAllWarehouses().find((w) => w.id !== depotId && w.status !== 'closed');

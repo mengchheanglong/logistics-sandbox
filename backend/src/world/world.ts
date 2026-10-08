@@ -293,8 +293,16 @@ export class World {
     return this.drivers.get(id);
   }
 
+  public getAllDrivers(): Driver[] {
+    return Array.from(this.drivers.values());
+  }
+
   public getCustomer(id: string): Customer | undefined {
     return this.customers.get(id);
+  }
+
+  public getAllCustomers(): Customer[] {
+    return Array.from(this.customers.values());
   }
 
   public getPendingOrders(): Order[] {

@@ -5,6 +5,7 @@ import { StatsBar } from './components/StatsBar';
 import { VehiclePanel } from './components/VehiclePanel';
 import { IncidentPanel } from './components/IncidentPanel';
 import { BenchmarkModal } from './components/BenchmarkModal';
+import { GraphIntelligenceModal } from './components/GraphIntelligenceModal';
 import { AnalyticsDrawer, AnalyticsTelemetryPoint } from './components/AnalyticsDrawer';
 import { NotificationToast, NotificationItem } from './components/NotificationToast';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -39,6 +40,7 @@ function ControlRoom() {
   const [chaseMode, setChaseMode] = useState<boolean>(false);
   const [incidentModalOpen, setIncidentModalOpen] = useState<boolean>(false);
   const [benchmarkModalOpen, setBenchmarkModalOpen] = useState<boolean>(false);
+  const [graphModalOpen, setGraphModalOpen] = useState<boolean>(false);
   const [analyticsOpen, setAnalyticsOpen] = useState<boolean>(false);
   const [showTrails, setShowTrails] = useState<boolean>(true);
   const [showHeatmap, setShowHeatmap] = useState<boolean>(false);
@@ -314,6 +316,7 @@ function ControlRoom() {
         onOpenAnalytics={() => setAnalyticsOpen(true)}
         onOpenIncidents={() => setIncidentModalOpen(true)}
         onOpenBenchmark={() => setBenchmarkModalOpen(true)}
+        onOpenGraph={() => setGraphModalOpen(true)}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -378,6 +381,13 @@ function ControlRoom() {
         onClose={() => setBenchmarkModalOpen(false)}
         stats={state.benchmarkStats}
         onUpdateAlgorithms={handleUpdateAlgorithms}
+      />
+
+      <GraphIntelligenceModal
+        isOpen={graphModalOpen}
+        onClose={() => setGraphModalOpen(false)}
+        warehouses={warehouses}
+        vehicles={vehicles}
       />
 
       <NotificationToast

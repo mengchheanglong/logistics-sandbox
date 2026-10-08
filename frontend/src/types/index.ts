@@ -181,3 +181,23 @@ export interface SimulationEvent {
   eventType: string;
   payload: Record<string, unknown>;
 }
+
+export interface GraphStatus {
+  driver: string;
+  healthy: boolean;
+  nodeCount: number;
+  relationshipCount: number;
+  url: string;
+}
+
+export interface ImpactAnalysisResult {
+  targetEntity: { type: string; id: string; name?: string; status?: string };
+  impactedVehicles: Array<{ id: string; name: string; type: string; status: string; driverName?: string; currentLoad_kg: number }>;
+  impactedOrders: Array<{ id: string; status: string; priority?: string; customerId: string; customerName?: string; totalWeight_kg: number }>;
+  impactedCustomers: Array<{ id: string; name: string; address?: string }>;
+  totalOrdersAtRisk: number;
+  totalPayloadKg: number;
+  estimatedRevenueAtRiskUSD: number;
+  traversalTimeMs: number;
+  cypherQuery: string;
+}

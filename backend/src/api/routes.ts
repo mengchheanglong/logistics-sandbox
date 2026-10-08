@@ -255,6 +255,54 @@ export function setupRoutes(engine: SimulationEngine): Router {
     res.json({ success: ok, itemsAdjusted: items.length });
   });
 
+  // Phase 3 Neo4j Relationship Graph & Impact Analysis Endpoints
+  router.get('/graph/status', (req, res) => {
+    res.json(engine.persistence.relationships.getStatus());
+  });
+
+  router.get('/graph/topology', async (req, res) => {
+    const topology = await engine.persistence.relationships.getGraphTopology();
+    res.json({
+      status: 'ok',
+      nodeCount: topology.nodes.length,
+      relationshipCount: topology.relationships.length,
+      ...topology,
+    });
+  });
+
+  router.get('/graph/impact/:entityType/:entityId', async (req, res) => {
+    const { entityType, entityId } = req.params;
+    if (entityType !== 'depot' && entityType !== 'vehicle' && entityType !== 'warehouse') {
+      res.status(400).json({ error: 'entityType must be depot, vehicle, or warehouse' });
+      return;
+    }
+    const impact = await engine.persistence.relationships.getImpactAnalysis(entityType, entityId);
+    res.json(impact);
+  });
+
+  router.post('/graph/query', async (req, res) => {
+    const { cypher, params } = req.body;
+    if (!cypher || typeof cypher !== 'string') {
+      res.status(400).json({ error: 'cypher string is required' });
+      return;
+    }
+    const result = await engine.persistence.relationships.executeCypher(cypher, params || {});
+    res.json(result);
+  });
+
+  router.post('/graph/sync', async (req, res) => {
+    await engine.persistence.relationships.syncTopology(
+      engine.world.getAllWarehouses(),
+      engine.world.getAllVehicles(),
+      engine.world.getAllDrivers()
+    );
+    res.json({
+      success: true,
+      message: 'World topology synchronized to Neo4j relationship graph',
+      status: engine.persistence.relationships.getStatus(),
+    });
+  });
+
   return router;
 }
 

@@ -18,6 +18,7 @@ import { InMemoryVehicleRepository } from './in-memory/vehicle.repository.js';
 import { InMemoryScenarioRepository } from './in-memory/scenario.repository.js';
 import { CassandraTelemetryRepository } from './cassandra/telemetry.repository.js';
 import { MongoOrderRepository } from './mongodb/order.repository.js';
+import { Neo4jRelationshipRepository } from './neo4j/relationship.repository.js';
 
 export function createPersistenceLayer(
   driverType: 'in-memory' | 'cassandra' | 'mongodb' | 'polyglot' = (process.env.PERSISTENCE_DRIVER as any) || 'polyglot'
@@ -26,6 +27,7 @@ export function createPersistenceLayer(
   let orders: IOrderRepository;
   const vehicles: IVehicleRepository = new InMemoryVehicleRepository();
   const scenarios: IScenarioRepository = new InMemoryScenarioRepository();
+  const relationships = new Neo4jRelationshipRepository();
 
   switch (driverType) {
     case 'cassandra':
@@ -56,6 +58,7 @@ export function createPersistenceLayer(
     orders,
     vehicles,
     scenarios,
+    relationships,
     driverType,
     getStatus() {
       return {
@@ -64,6 +67,7 @@ export function createPersistenceLayer(
         orders: orders.getStatus(),
         vehicles: vehicles.getStatus(),
         scenarios: scenarios.getStatus(),
+        relationships: relationships.getStatus(),
       };
     },
   };
