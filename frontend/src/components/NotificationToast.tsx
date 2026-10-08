@@ -26,7 +26,7 @@ export function NotificationToast({ notifications, onDismiss }: NotificationToas
   if (notifications.length === 0) return null;
 
   return (
-    <div className="fixed top-16 right-5 z-50 flex flex-col gap-2 max-w-sm pointer-events-none select-none">
+    <div className="fixed top-16 left-5 z-50 flex flex-col gap-2 max-w-sm pointer-events-none select-none">
       {notifications.slice(-4).map((n) => {
         const borderClass =
           n.type === 'error'
