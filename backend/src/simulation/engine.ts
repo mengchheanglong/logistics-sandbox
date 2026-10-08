@@ -19,6 +19,8 @@ import { World } from '../world/world.js';
 import { EventBus } from '../events/event-bus.js';
 import { Dispatcher, AssignmentResult } from '../dispatch/dispatcher.js';
 import { VrpTourSolver } from '../dispatch/vrp.js';
+import { PredictiveAiEngine } from '../dispatch/predictive-ai.js';
+import { ChaosEngine } from './chaos-engine.js';
 import { RoutingClient } from '../routing/client.js';
 import { EcommerceClient, EcommerceOrder } from '../integrations/ecommerce.js';
 import { createPersistenceLayer, IPersistenceLayer, TelemetryPing } from '../persistence/index.js';
@@ -36,6 +38,7 @@ import {
   AlgorithmBenchmarkStats,
   RoadIncident,
   ScenarioConfig,
+  ChaosMode,
 } from '../world/types.js';
 import {
   interpolateAlongPath,
@@ -128,6 +131,8 @@ export class SimulationEngine {
   public routingClient: RoutingClient;
   public ecommerceClient: EcommerceClient;
   public persistence: IPersistenceLayer;
+  public predictiveAiEngine: PredictiveAiEngine;
+  public chaosEngine: ChaosEngine = new ChaosEngine();
 
   private simulationId: string;
   private intervalId: NodeJS.Timeout | null = null;
@@ -183,6 +188,7 @@ export class SimulationEngine {
     this.routingClient = new RoutingClient();
     this.ecommerceClient = new EcommerceClient();
     this.persistence = createPersistenceLayer();
+    this.predictiveAiEngine = new PredictiveAiEngine();
 
     this.targetOrderCount = defaultScenario.orderCount;
     // Spread order generation across the simulation duration
@@ -337,6 +343,14 @@ export class SimulationEngine {
 
     // 5. Move vehicles along their routes
     this.updateVehicles(simTime, deltaMs);
+
+    // 6. Phase 4: Run Predictive AI rebalancing cycle if enabled
+    if (this.activeDispatchStrategy === 'predictive_ai' && this.tickCounter % 30 === 0) {
+      this.evaluatePredictiveRebalancing(simTime);
+    }
+
+    // 7. Phnom Penh Urban Chaos Engine loop
+    this.chaosEngine.tick(simTime, this);
   }
 
   /**
@@ -504,7 +518,7 @@ export class SimulationEngine {
     });
 
     console.log(`[SimulationEngine] Scenario loaded: ${scenario.name} (${this.activeScenarioId})`);
-    return { success: true, message: `Loaded scenario "${scenario.name}".`, scenario };
+    return { success: true, message: `Loaded scenario "${scenario.name}".`, scenario, state: this.getState() };
   }
 
   /**
@@ -682,6 +696,8 @@ export class SimulationEngine {
       .assignOrder(order, idleVehicles, this.routingClient, {
         strategy: this.activeDispatchStrategy,
         routingAlgorithm: this.activeRoutingAlgorithm,
+        predictiveEngine: this.predictiveAiEngine,
+        forecasts: this.predictiveAiEngine.computeDistrictForecasts(this.world, this.dispatchQueue),
       })
       .then((result: AssignmentResult | null) => {
         if (result) {
@@ -742,6 +758,49 @@ export class SimulationEngine {
         console.error('[SimulationEngine] Dispatch error:', err);
         this.dispatching = false;
       });
+  }
+
+  /**
+   * Phase 4: Execute an autonomous anticipatory fleet rebalancing pass.
+   */
+  public async evaluatePredictiveRebalancing(simTime: number): Promise<{ success: boolean; action?: any }> {
+    try {
+      const plan = await this.predictiveAiEngine.planAnticipatoryRebalancing(
+        this.world,
+        this.routingClient,
+        this.activeRoutingAlgorithm,
+        simTime,
+        this.dispatchQueue
+      );
+
+      if (!plan) return { success: false };
+
+      const { vehicle, action, path, distanceM, durationS } = plan;
+      vehicle.status = 'en_route';
+      vehicle.routeGeometry = path;
+      vehicle.routeProgress = 0;
+      vehicle.routeDistanceM = distanceM;
+      vehicle.routeDurationS = durationS;
+      vehicle.currentRouteId = action.id;
+      vehicle.assignedOrderIds = [];
+      vehicle.currentLoad_kg = 0;
+      vehicle.trailHistory = [[vehicle.position.lon, vehicle.position.lat, simTime]];
+
+      this.emitEvent('vehicle', vehicle.id, 'vehicle.repositioned', {
+        actionId: action.id,
+        vehicleId: vehicle.id,
+        fromDistrict: action.fromDistrict,
+        toDistrict: action.toDistrict,
+        reason: action.reason,
+        targetPosition: action.targetPosition,
+      });
+
+      console.log(`[SimulationEngine] 🤖 AI Rebalanced ${vehicle.id}: ${action.reason}`);
+      return { success: true, action };
+    } catch (err) {
+      console.warn('[SimulationEngine] Predictive rebalancing evaluation error:', err);
+      return { success: false };
+    }
   }
 
   /**
@@ -925,6 +984,9 @@ export class SimulationEngine {
         if (order) {
           order.status = 'delivered';
           order.deliveredAt = simTime;
+          if (order.slaDeadline && simTime <= order.slaDeadline) {
+            this.predictiveAiEngine.recordAvertedBreach();
+          }
           this.persistence.orders.updateOrderStatus(orderId, 'delivered', simTime).catch(() => {});
           this.persistence.relationships.updateOrderStatus(orderId, 'delivered').catch(() => {});
 
@@ -941,6 +1003,15 @@ export class SimulationEngine {
       this.emitEvent('vehicle', vehicle.id, 'vehicle.arrived', {
         orderIds: vehicle.assignedOrderIds,
       });
+
+      // If vehicle was on an AI anticipatory rebalancing trip, it remains idle at its new staging location
+      if (vehicle.currentRouteId?.startsWith('REBAL-') || vehicle.assignedOrderIds.length === 0) {
+        this.resetVehicleToIdle(vehicle);
+        this.emitEvent('vehicle', vehicle.id, 'vehicle.rebalance.completed', {
+          position: vehicle.position,
+        });
+        return;
+      }
 
       // Vehicle now returns to depot
       const depot = this.world.getAllWarehouses().find((w) => w.id === vehicle.depotId);
@@ -1067,6 +1138,12 @@ export class SimulationEngine {
       (o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.slaStatus === 'breached'
     ).length;
     const lateOrders = breachedActiveCount + slaBreachedDeliveries;
+    const predictiveMetrics = this.predictiveAiEngine.getMetrics(
+      this.world,
+      this.clock.getSimulatedTime(),
+      this.trafficMultiplier,
+      this.dispatchQueue
+    );
 
     return {
       simulationId: this.simulationId,
@@ -1086,6 +1163,9 @@ export class SimulationEngine {
       benchmarkStats: this.getBenchmarkStats(),
       incidents: this.incidents.filter((i) => i.active),
       activeScenarioId: this.activeScenarioId,
+      predictiveAi: predictiveMetrics,
+      chaosMode: this.chaosEngine.getMode(),
+      chaosActiveEventsCount: this.chaosEngine.getActiveEvents().length,
       stats: {
         activeVehicles: activeVehicles.length,
         totalOrders: orders.length,
@@ -1098,8 +1178,80 @@ export class SimulationEngine {
         slaBreachedDeliveries,
         slaComplianceRate,
         atRiskOrdersCount,
+        aiRebalancesCount: predictiveMetrics.totalRebalancesExecuted,
+        slaBreachesAverted: predictiveMetrics.slaBreachRiskAvertedCount,
       },
     };
+  }
+
+  public getSimulationId(): string {
+    return this.simulationId;
+  }
+
+  public getChaosMetrics() {
+    return this.chaosEngine.getMetrics();
+  }
+
+  public setChaosMode(mode: ChaosMode) {
+    this.chaosEngine.setMode(mode);
+    this.emitEvent('simulation', this.simulationId, 'chaos.mode_changed', { mode });
+  }
+
+  /**
+   * One-click automated mitigation for at-risk SLA orders.
+   * Elevates priority, grants time waiver, and re-routes or reassigns courier.
+   */
+  public async mitigateSlaBreachRisk(orderId: string): Promise<{ success: boolean; message: string; actionTaken: string }> {
+    const order = this.world.getOrder(orderId);
+    if (!order) return { success: false, message: 'Order not found', actionTaken: 'none' };
+
+    order.priority = 'urgent';
+    order.slaDeadline += 15 * 60 * 1000; // Emergency 15-minute priority extension
+
+    if (order.assignedVehicleId) {
+      const v = this.world.getVehicle(order.assignedVehicleId);
+      if (v && (v.status === 'en_route' || v.status === 'delivering')) {
+        await this.rerouteVehicle(v.id, { reason: 'sla_breach_mitigation_fast_corridor', avoidIncidents: true });
+        this.predictiveAiEngine.recordBreachAverted();
+        this.emitEvent('order', order.id, 'order.sla_mitigated', {
+          orderId: order.id,
+          vehicleId: v.id,
+          action: 'corridor_fast_path_reroute',
+        });
+        return {
+          success: true,
+          message: `Order ${orderId} elevated to URGENT priority. Courier ${v.name} dynamically re-routed via expedited corridor.`,
+          actionTaken: 'expedited_reroute',
+        };
+      }
+    }
+
+    const qIdx = this.dispatchQueue.indexOf(order.id);
+    if (qIdx > -1) {
+      this.dispatchQueue.splice(qIdx, 1);
+    }
+    this.dispatchQueue.unshift(order.id);
+    await this.dispatchPendingOrders();
+
+    this.predictiveAiEngine.recordBreachAverted();
+    return {
+      success: true,
+      message: `Order ${orderId} elevated to URGENT priority and bumped to head of dispatch queue.`,
+      actionTaken: 'priority_reassignment',
+    };
+  }
+
+  public getPredictiveAiMetrics(): PredictiveAiMetrics {
+    return this.predictiveAiEngine.getMetrics(
+      this.world,
+      this.clock.getSimulatedTime(),
+      this.trafficMultiplier,
+      this.dispatchQueue
+    );
+  }
+
+  public async triggerPredictiveRebalance(): Promise<{ success: boolean; action?: any }> {
+    return this.evaluatePredictiveRebalancing(this.clock.getSimulatedTime());
   }
 
   public setAlgorithms(options: {
@@ -1454,9 +1606,11 @@ export class SimulationEngine {
     return { reroutedCount: successfulIds.length, vehicles: successfulIds };
   }
 
-  public injectEvent(event: { type: string; targetId?: string; payload?: Record<string, unknown> }): { success: boolean; message: string } {
+  public injectEvent(event: { type: string; targetId?: string; payload?: Record<string, unknown> }): { success: boolean; message: string; incident?: RoadIncident; order?: Order; vehicle?: Vehicle; affectedVehiclesCount?: number } {
     switch (event.type) {
-      case 'vehicle_breakdown': {
+      case 'vehicle_breakdown':
+      case 'vehicle.broken_down':
+      case 'vehicle.failed': {
         const vehicle = event.targetId ? this.world.getVehicle(event.targetId) : undefined;
         if (!vehicle) return { success: false, message: 'Vehicle not found' };
 
@@ -1491,10 +1645,11 @@ export class SimulationEngine {
           reason: 'operator_intervention',
           reallocatedOrders: reallocated,
         });
-        return { success: true, message: `Vehicle ${vehicle.id} broke down. ${reallocated} orders returned to queue.` };
+        return { success: true, message: `Vehicle ${vehicle.id} broke down. ${reallocated} orders returned to queue.`, vehicle };
       }
 
-      case 'vehicle_recover': {
+      case 'vehicle_recover':
+      case 'vehicle.recovered': {
         const vehicle = event.targetId ? this.world.getVehicle(event.targetId) : undefined;
         if (!vehicle) return { success: false, message: 'Vehicle not found' };
 
@@ -1503,10 +1658,11 @@ export class SimulationEngine {
         this.emitEvent('vehicle', vehicle.id, 'vehicle.recovered', {
           reason: 'operator_intervention',
         });
-        return { success: true, message: `Vehicle ${vehicle.id} repaired and back in service.` };
+        return { success: true, message: `Vehicle ${vehicle.id} repaired and back in service.`, vehicle };
       }
 
-      case 'depot_closure': {
+      case 'depot_closure':
+      case 'depot.closed': {
         const depotId = event.targetId;
         const depot = this.world.getAllWarehouses().find((w) => w.id === depotId);
         if (!depot) return { success: false, message: 'Depot not found' };
@@ -1534,13 +1690,14 @@ export class SimulationEngine {
         }
 
         this.emitEvent('depot', depot.id, 'depot.closed', {
-          reason: event.payload?.reason || 'emergency_flooding',
+          reason: (event.payload?.reason as string) || 'emergency_flooding',
           rehomedVehicles: rehomed,
         });
         return { success: true, message: `Depot ${depot.name} (${depot.id}) closed. ${rehomed} vehicles transferred.` };
       }
 
-      case 'depot_reopen': {
+      case 'depot_reopen':
+      case 'depot.reopened': {
         const depotId = event.targetId;
         const depot = this.world.getAllWarehouses().find((w) => w.id === depotId);
         if (!depot) return { success: false, message: 'Depot not found' };
@@ -1578,20 +1735,25 @@ export class SimulationEngine {
         return { success: true, message: `Traffic congestion set to ${factor.toFixed(1)}x slowdown.` };
       }
 
-      case 'road_incident': {
+      case 'road_incident':
+      case 'incident.create':
+      case 'incident.created': {
         const payload = event.payload || {};
+        const pos = (payload.center as Coordinate) || (payload.position as Coordinate) || { lat: 11.5564, lon: 104.9282 };
         const incident = this.createRoadIncident({
-          type: (payload.incidentType as any) || 'accident',
+          type: (payload.type as any) || (payload.incidentType as any) || 'accident',
           description: (payload.description as string) || 'Road Incident Blockade',
-          position: (payload.position as Coordinate) || { lat: 11.5564, lon: 104.9282 },
+          position: pos,
           radiusM: Number(payload.radiusM) || 500,
           severity: (payload.severity as any) || 'high',
           autoRerouteAffected: payload.autoReroute !== false,
         });
-        return { success: true, message: `Road incident created: "${incident.description}" (Radius: ${incident.radiusM}m).` };
+        return { success: true, incident, message: `Road incident created: "${incident.description}" (Radius: ${incident.radiusM}m).` };
       }
 
-      case 'clear_incident': {
+      case 'clear_incident':
+      case 'incident.clear':
+      case 'incident.cleared': {
         const incidentId = event.targetId || (event.payload?.incidentId as string);
         if (!incidentId) return { success: false, message: 'Incident ID required.' };
         const cleared = this.clearRoadIncident(incidentId);
@@ -1611,7 +1773,9 @@ export class SimulationEngine {
         return { success: true, message: 'Fleet-wide in-flight re-route triggered.' };
       }
 
-      case 'inject_order': {
+      case 'inject_order':
+      case 'order.injected':
+      case 'order.create': {
         const payload = (event.payload || {}) as any;
         this.injectCustomOrder(payload).then((res) => {
           this.emitEvent('order', res.order?.id || 'manual', 'order.injected', res);
@@ -1623,6 +1787,16 @@ export class SimulationEngine {
         console.log(`[SimulationEngine] Unknown injection event type: ${event.type}`);
         return { success: false, message: `Unknown event type: ${event.type}` };
     }
+  }
+
+  public async injectEventAsync(event: { type: string; targetId?: string; payload?: Record<string, unknown> }): Promise<{ success: boolean; message: string; incident?: RoadIncident; order?: Order; vehicle?: Vehicle; affectedVehiclesCount?: number }> {
+    if (event.type === 'inject_order' || event.type === 'order.injected' || event.type === 'order.create') {
+      const payload = (event.payload || {}) as any;
+      const res = await this.injectCustomOrder(payload);
+      this.emitEvent('order', res.order?.id || 'manual', 'order.injected', res);
+      return { success: res.success, order: res.order, message: res.message || 'Express delivery order injected.' };
+    }
+    return this.injectEvent(event);
   }
 
   /**

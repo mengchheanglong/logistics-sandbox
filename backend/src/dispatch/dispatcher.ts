@@ -7,9 +7,10 @@
  * 3. 'cluster_zone': Geographic clustering — prioritizes vehicles stationed at the depot closest to the customer to minimize cross-city trips.
  */
 
-import { Order, Vehicle, DispatchStrategy, RoutingAlgorithm } from '../world/types.js';
+import { Order, Vehicle, DispatchStrategy, RoutingAlgorithm, DistrictDemandForecast } from '../world/types.js';
 import { RoutingClient, RouteResult } from '../routing/client.js';
 import { haversineDistance } from '../utils/geo.js';
+import { PredictiveAiEngine } from './predictive-ai.js';
 
 export interface AssignmentResult {
   vehicleId: string;
@@ -28,6 +29,8 @@ export class Dispatcher {
     options: {
       strategy?: DispatchStrategy;
       routingAlgorithm?: RoutingAlgorithm;
+      predictiveEngine?: PredictiveAiEngine;
+      forecasts?: DistrictDemandForecast[];
     } = {}
   ): Promise<AssignmentResult | null> {
     const strategy = options.strategy || 'nearest_available';
@@ -43,7 +46,7 @@ export class Dispatcher {
     }
 
     // 2. Select vehicle based on dispatch strategy
-    const chosenVehicle = this.selectVehicle(order, eligible, strategy);
+    const chosenVehicle = this.selectVehicle(order, eligible, strategy, options.predictiveEngine, options.forecasts);
     if (!chosenVehicle) return null;
 
     // 3. Calculate route with osm-pathfinder using selected routing algorithm
@@ -74,9 +77,27 @@ export class Dispatcher {
   private selectVehicle(
     order: Order,
     eligible: Vehicle[],
-    strategy: DispatchStrategy
+    strategy: DispatchStrategy,
+    predictiveEngine?: PredictiveAiEngine,
+    forecasts?: DistrictDemandForecast[]
   ): Vehicle | null {
     switch (strategy) {
+      case 'predictive_ai': {
+        if (predictiveEngine && forecasts) {
+          return [...eligible].sort((a, b) => {
+            const scoreA = predictiveEngine.scorePredictiveVehicle(order, a, forecasts);
+            const scoreB = predictiveEngine.scorePredictiveVehicle(order, b, forecasts);
+            return scoreA - scoreB;
+          })[0];
+        }
+        // Fallback to capacity-weighted proximity
+        return [...eligible].sort((a, b) => {
+          const distA = haversineDistance(a.position, order.pickupLocation);
+          const distB = haversineDistance(b.position, order.pickupLocation);
+          return distA - distB;
+        })[0];
+      }
+
       case 'route_aware': {
         // Balances proximity and remaining vehicle capacity
         return [...eligible].sort((a, b) => {

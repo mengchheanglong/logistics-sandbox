@@ -78,6 +78,12 @@ const DISPATCH_STRATEGIES: {
     badge: '📦 VRP Multi-Drop',
     description: 'Batches 3-8 packages per vehicle and optimizes drop sequence using Nearest-Neighbor TSP heuristic with depot return.',
   },
+  {
+    id: 'predictive_ai',
+    name: 'Predictive AI (Phase 4 Equilibrium)',
+    badge: '🤖 Anticipatory AI',
+    description: 'Real-time district demand forecasting & anticipatory fleet repositioning to eliminate courier shortages before order surges.',
+  },
 ];
 
 export function BenchmarkModal({

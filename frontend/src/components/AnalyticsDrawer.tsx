@@ -3,13 +3,15 @@ import {
   BarChart3,
   Activity,
   Database,
+  Brain,
   X,
   HardDrive,
   Cpu,
   Layers,
 } from 'lucide-react';
 import { HiveWarehouseTab } from '../features/analytics/HiveWarehouseTab';
-import type { SimulationStats } from '../types';
+import { PredictiveAiTab } from '../features/analytics/PredictiveAiTab';
+import type { SimulationStats, PredictiveAiMetrics } from '../types';
 
 export interface AnalyticsTelemetryPoint {
   simTime: number;
@@ -35,6 +37,8 @@ interface AnalyticsDrawerProps {
   activeRoutingAlgorithm?: string;
   activeDispatchStrategy?: string;
   totalVehiclesCount: number;
+  predictiveAi?: PredictiveAiMetrics;
+  onTriggerRebalance?: () => Promise<void>;
 }
 
 export function AnalyticsDrawer({
@@ -46,8 +50,10 @@ export function AnalyticsDrawer({
   activeRoutingAlgorithm = 'contraction_hierarchies',
   activeDispatchStrategy = 'nearest',
   totalVehiclesCount,
+  predictiveAi,
+  onTriggerRebalance,
 }: AnalyticsDrawerProps) {
-  const [activeTab, setActiveTab] = useState<'fleet' | 'hive'>('fleet');
+  const [activeTab, setActiveTab] = useState<'fleet' | 'hive' | 'ai'>('fleet');
 
   // Keyboard accessibility: Escape key closes drawer
   useEffect(() => {
@@ -161,10 +167,10 @@ export function AnalyticsDrawer({
 
       {/* 2. Navigation Tab Switcher */}
       <div className="h-12 px-6 shrink-0 border-b border-slate-800/80 bg-slate-900/40 flex items-center justify-between">
-        <div className="flex space-x-1.5">
+        <div className="flex space-x-1.5 overflow-x-auto">
           <button
             onClick={() => setActiveTab('fleet')}
-            className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'fleet'
                 ? 'bg-cyan-600 text-white shadow-[0_0_12px_rgba(6,182,212,0.35)]'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
@@ -175,21 +181,36 @@ export function AnalyticsDrawer({
           </button>
 
           <button
+            onClick={() => setActiveTab('ai')}
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+              activeTab === 'ai'
+                ? 'bg-purple-600 text-white shadow-[0_0_12px_rgba(168,85,247,0.35)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Brain className="w-3.5 h-3.5 text-purple-300" />
+            <span>AI Predictive Ops (Phase 4)</span>
+            {predictiveAi?.activeRebalancingActions && predictiveAi.activeRebalancingActions > 0 ? (
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse ml-0.5" />
+            ) : null}
+          </button>
+
+          <button
             onClick={() => setActiveTab('hive')}
-            className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'hive'
                 ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.35)]'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
             <Database className="w-3.5 h-3.5" />
-            <span>Apache Hive 3.1 Warehouse (Cold Path)</span>
+            <span>Apache Hive 3.1 Warehouse</span>
           </button>
         </div>
 
-        <div className="text-[11px] font-mono text-slate-500 hidden sm:flex items-center space-x-1.5">
-          <span className={`w-1.5 h-1.5 rounded-full ${activeTab === 'fleet' ? 'bg-cyan-400 animate-pulse' : 'bg-blue-400'}`} />
-          <span>{activeTab === 'fleet' ? '1 Hz Telemetry Buffer' : 'Vectorized Tez DAG / HDFS'}</span>
+        <div className="text-[11px] font-mono text-slate-500 hidden sm:flex items-center space-x-1.5 shrink-0">
+          <span className={`w-1.5 h-1.5 rounded-full ${activeTab === 'ai' ? 'bg-purple-400 animate-pulse' : activeTab === 'fleet' ? 'bg-cyan-400 animate-pulse' : 'bg-blue-400'}`} />
+          <span>{activeTab === 'ai' ? 'Equilibrium Rebalancing' : activeTab === 'fleet' ? '1 Hz Telemetry Buffer' : 'Vectorized Tez DAG / HDFS'}</span>
         </div>
       </div>
 
@@ -281,6 +302,11 @@ export function AnalyticsDrawer({
               </div>
             </div>
           </div>
+        ) : activeTab === 'ai' ? (
+          <PredictiveAiTab
+            metrics={predictiveAi}
+            onTriggerRebalance={onTriggerRebalance}
+          />
         ) : (
           <HiveWarehouseTab />
         )}
@@ -290,7 +316,9 @@ export function AnalyticsDrawer({
       <div className="h-12 px-6 shrink-0 border-t border-slate-800 bg-slate-900/60 text-[11px] text-slate-400 font-mono flex items-center justify-between">
         <span>Logistics Sandbox Analytics Engine</span>
         <span>
-          {activeTab === 'fleet'
+          {activeTab === 'ai'
+            ? 'Phase 4 Predictive AI • District Zoning & SLA Radar'
+            : activeTab === 'fleet'
             ? `Telemetry: ${history.length} samples buffer`
             : 'Apache Hive 3.1 • Tez Vectorized • HDFS'}
         </span>

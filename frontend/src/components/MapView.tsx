@@ -3,7 +3,7 @@ import Map from 'react-map-gl/maplibre';
 import { DeckGL } from '@deck.gl/react';
 import { ScatterplotLayer, PathLayer, TextLayer } from '@deck.gl/layers';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
-import type { Vehicle, Warehouse, RoadIncident, Order, Coordinate } from '../types';
+import type { Vehicle, Warehouse, RoadIncident, Order, Coordinate, TelemetryPlaybackPing } from '../types';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 export interface DestinationInfo {
@@ -181,6 +181,8 @@ interface MapViewProps {
   onToggleLegend?: () => void;
   chaseMode?: boolean;
   onToggleChaseMode?: () => void;
+  playbackCurrentPing?: TelemetryPlaybackPing | null;
+  playbackTrailPings?: TelemetryPlaybackPing[];
 }
 
 export function MapView({
@@ -198,6 +200,8 @@ export function MapView({
   onToggleLegend,
   chaseMode = false,
   onToggleChaseMode,
+  playbackCurrentPing,
+  playbackTrailPings = [],
 }: MapViewProps) {
   const [viewState, setViewState] = useState(DEFAULT_CENTER);
   const [mapTheme, setMapTheme] = useState<'dark' | 'liberty'>('dark');
@@ -983,6 +987,68 @@ export function MapView({
       },
     });
 
+    // Phase 4: Historical Cassandra Telemetry Breadcrumb Trail
+    const playbackPathLayer = new PathLayer({
+      id: 'playback-breadcrumb-trail-layer',
+      data: playbackTrailPings && playbackTrailPings.length > 1 ? [{
+        path: playbackTrailPings.map((p) => [p.lon, p.lat] as [number, number]),
+      }] : [],
+      pickable: false,
+      widthMinPixels: 4,
+      widthMaxPixels: 9,
+      getPath: (d: any) => d.path,
+      getColor: [245, 158, 11, 230], // Amber Gold Cassandra GPS Trail
+      visible: !!(playbackTrailPings && playbackTrailPings.length > 1),
+    });
+
+    const playbackMarkerHaloLayer = new ScatterplotLayer({
+      id: 'playback-vehicle-halo-layer',
+      data: playbackCurrentPing ? [playbackCurrentPing] : [],
+      pickable: true,
+      stroked: true,
+      filled: true,
+      radiusMinPixels: 14,
+      radiusMaxPixels: 28,
+      lineWidthMinPixels: 3,
+      getPosition: (d: TelemetryPlaybackPing) => [d.lon, d.lat],
+      getFillColor: [245, 158, 11, 130],
+      getLineColor: [255, 255, 255, 255],
+      visible: !!playbackCurrentPing,
+    });
+
+    const playbackMarkerCoreLayer = new ScatterplotLayer({
+      id: 'playback-vehicle-core-layer',
+      data: playbackCurrentPing ? [playbackCurrentPing] : [],
+      pickable: false,
+      stroked: true,
+      filled: true,
+      radiusMinPixels: 6,
+      radiusMaxPixels: 10,
+      lineWidthMinPixels: 2,
+      getPosition: (d: TelemetryPlaybackPing) => [d.lon, d.lat],
+      getFillColor: [0, 240, 255, 255],
+      getLineColor: [15, 23, 42, 255],
+      visible: !!playbackCurrentPing,
+    });
+
+    const playbackLabelLayer = new TextLayer({
+      id: 'playback-vehicle-label-layer',
+      data: playbackCurrentPing ? [playbackCurrentPing] : [],
+      getPosition: (d: TelemetryPlaybackPing) => [d.lon, d.lat],
+      getText: (d: TelemetryPlaybackPing) => `📼 PLAYBACK: ${d.speed_kmh.toFixed(1)} km/h • Bat ${Math.round(d.battery_level)}%`,
+      getSize: 11,
+      getColor: [254, 240, 138, 255],
+      getTextAnchor: 'middle',
+      getAlignmentBaseline: 'bottom',
+      getPixelOffset: [0, -22],
+      backgroundColor: [15, 23, 42, 240],
+      backgroundPadding: [6, 3, 6, 3],
+      fontFamily: 'monospace',
+      fontWeight: 'bold',
+      characterSet: 'auto',
+      visible: !!playbackCurrentPing,
+    });
+
     return [
       heatmapLayer,
       routeLayer,
@@ -1002,6 +1068,10 @@ export function MapView({
       vehicleBeaconLayer,
       vehicleCoreLayer,
       selectedVehicleLabelLayer,
+      playbackPathLayer,
+      playbackMarkerHaloLayer,
+      playbackMarkerCoreLayer,
+      playbackLabelLayer,
     ];
   }, [
     vehicles,
@@ -1017,6 +1087,8 @@ export function MapView({
     selectedVehicle,
     selectedDestinations,
     focusDestinationOnly,
+    playbackCurrentPing,
+    playbackTrailPings,
   ]);
 
   return (

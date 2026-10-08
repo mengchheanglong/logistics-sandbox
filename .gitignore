@@ -43,3 +43,6 @@ data/*.json.gz
 
 # Simulation recordings (can be large)
 recordings/
+
+# Scratch scripts
+scratch/

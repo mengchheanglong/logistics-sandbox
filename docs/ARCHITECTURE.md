@@ -149,10 +149,10 @@ The initial milestone focuses on laying the interactive groundwork:
 
 ## 8. Phased Roadmap
 
-- **Phase 1 (V1 - Current):** Core simulation loop, routing integration, real-time visualization. In-memory data.
-- **Phase 2 (V2):** Advanced Dispatching (capacity constraints, batching). Shift scheduling. Time-dependent traffic modeling visualization.
-- **Phase 3 (V3 - Persistence):** Integrate the `ecommerce-hive-nosql` data layer. Cassandra for rider telemetry, MongoDB for orders.
-- **Phase 4 (V4 - Analytics):** Hive/HDFS OLAP integration. Analytics dashboard (heatmap of late deliveries, courier utilization metrics). Social/Referral Graph integration.
+- **Phase 1 (V1 - Completed):** Core simulation loop, OSM road routing integration (`osm-pathfinder`), real-time MapLibre + deck.gl digital-twin visualization.
+- **Phase 2 (V2 - Completed):** Advanced Dispatching (Multi-factor scoring, VRPTW, SLA deadlines, priority weights), in-flight road incident hazards, real-time dynamic rerouting, interactive scenario presets.
+- **Phase 3 (V3 - Completed):** Polyglot NoSQL persistence integration (`ecommerce-hive-nosql`): Cassandra rider telemetry persistence, MongoDB order sync, Hive 3.1 warehouse analytics workbench, Neo4j customer social/referral intelligence modal.
+- **Phase 4 (V4 - Completed):** Predictive AI Dispatch & Dynamic Fleet Rebalancing across 5 Phnom Penh territory zones, real-time Dynamic SLA Breach Risk Radar, Cassandra Historical Telemetry Time-Series Trip Playback with interactive scrubber, and Phase 4 Predictive Ops Analytics Drawer.
 
 ## 9. What Is Reused
 

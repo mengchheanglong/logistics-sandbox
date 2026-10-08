@@ -17,8 +17,10 @@ import {
   AlertTriangle,
   BarChart3,
   Send,
+  Film,
+  Brain,
 } from 'lucide-react';
-import type { SpeedSetting, EcommerceBridgeStatus, AlgorithmBenchmarkStats } from '../types';
+import type { SpeedSetting, EcommerceBridgeStatus, AlgorithmBenchmarkStats, ChaosMode } from '../types';
 
 interface ControlBarProps {
   simTime: string;
@@ -33,6 +35,7 @@ interface ControlBarProps {
   showLegend?: boolean;
   ecommerceBridge?: EcommerceBridgeStatus;
   benchmarkStats?: AlgorithmBenchmarkStats;
+  chaosMode?: ChaosMode;
   onSpeedChange: (speed: SpeedSetting) => void;
   onPause: () => void;
   onResume: () => void;
@@ -48,6 +51,8 @@ interface ControlBarProps {
   onOpenBenchmark?: () => void;
   onOpenGraph?: () => void;
   onOpenDispatchOrder?: () => void;
+  onOpenPlayback?: () => void;
+  onToggleChaos?: (mode: ChaosMode) => void;
 }
 
 const SPEEDS: { label: string; value: SpeedSetting }[] = [
@@ -85,6 +90,9 @@ export function ControlBar({
   onOpenBenchmark,
   onOpenGraph,
   onOpenDispatchOrder,
+  onOpenPlayback,
+  chaosMode = 'off',
+  onToggleChaos,
 }: ControlBarProps) {
   const defaultPresets = [
     { id: 'morning_delivery', name: 'Morning Delivery' },
@@ -102,7 +110,9 @@ export function ControlBar({
       : benchmarkStats?.routingAlgorithm?.toUpperCase() || 'CH';
 
   const strategyShort =
-    benchmarkStats?.dispatchStrategy === 'multi_stop_tour'
+    benchmarkStats?.dispatchStrategy === 'predictive_ai'
+      ? '🤖 AI'
+      : benchmarkStats?.dispatchStrategy === 'multi_stop_tour'
       ? 'Tour'
       : benchmarkStats?.dispatchStrategy === 'cluster_zone'
       ? 'Cluster'
@@ -348,6 +358,38 @@ export function ControlBar({
             <span>Analytics</span>
           </button>
         )}
+
+        {onOpenPlayback && (
+          <button
+            onClick={onOpenPlayback}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded bg-sky-950/60 text-sky-300 border border-sky-600/50 hover:bg-sky-900/60 hover:border-sky-400 whitespace-nowrap transition-all cursor-pointer shadow-[0_0_10px_rgba(56,189,248,0.15)] active:scale-95"
+            title="Open Historical Telemetry Trip Playback Scrubber (Phase 4)"
+          >
+            <Film className="w-3.5 h-3.5 text-sky-400" />
+            <span>Replay</span>
+          </button>
+        )}
+
+        <button
+          onClick={() => {
+            const modes: ChaosMode[] = ['off', 'low', 'medium', 'extreme'];
+            const nextIdx = (modes.indexOf(chaosMode || 'off') + 1) % modes.length;
+            onToggleChaos?.(modes[nextIdx]);
+          }}
+          className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded whitespace-nowrap transition-all cursor-pointer border active:scale-95 ${
+            chaosMode === 'extreme'
+              ? 'bg-rose-950 text-rose-300 border-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.4)] animate-pulse'
+              : chaosMode === 'medium'
+              ? 'bg-orange-950 text-orange-300 border-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.3)]'
+              : chaosMode === 'low'
+              ? 'bg-amber-950 text-amber-300 border-amber-500'
+              : 'bg-slate-900/90 text-slate-400 border-slate-700/80 hover:text-slate-200'
+          }`}
+          title="Toggle Phnom Penh Urban Chaos Engine (Crisis Simulation & Autonomous Self-Healing)"
+        >
+          <Flame className={`w-3.5 h-3.5 ${chaosMode !== 'off' ? 'text-rose-400 fill-rose-500/20' : 'text-slate-500'}`} />
+          <span>Chaos: {(chaosMode || 'OFF').toUpperCase()}</span>
+        </button>
 
         <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-900/90 border border-slate-800 text-xs font-mono font-bold whitespace-nowrap">
           <span

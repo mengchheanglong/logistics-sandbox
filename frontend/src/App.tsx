@@ -8,11 +8,12 @@ import { BenchmarkModal } from './components/BenchmarkModal';
 import { GraphIntelligenceModal } from './components/GraphIntelligenceModal';
 import { DispatchOrderModal } from './components/DispatchOrderModal';
 import { AnalyticsDrawer, AnalyticsTelemetryPoint } from './components/AnalyticsDrawer';
+import { TripPlaybackModal } from './components/TripPlaybackModal';
 import { NotificationToast, NotificationItem } from './components/NotificationToast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useSimulation } from './hooks/useSimulation';
 import { useWebSocket } from './hooks/useWebSocket';
-import type { SimulationState, SimulationEvent, Vehicle, RoutingAlgorithm, DispatchStrategy } from './types';
+import type { SimulationState, SimulationEvent, Vehicle, RoutingAlgorithm, DispatchStrategy, TelemetryPlaybackPing, ChaosMode } from './types';
 import './index.css';
 
 export default function App() {
@@ -44,6 +45,10 @@ function ControlRoom() {
   const [benchmarkModalOpen, setBenchmarkModalOpen] = useState<boolean>(false);
   const [graphModalOpen, setGraphModalOpen] = useState<boolean>(false);
   const [analyticsOpen, setAnalyticsOpen] = useState<boolean>(false);
+  const [playbackModalOpen, setPlaybackModalOpen] = useState<boolean>(false);
+  const [playbackVehicleId, setPlaybackVehicleId] = useState<string | null>(null);
+  const [playbackCurrentPing, setPlaybackCurrentPing] = useState<TelemetryPlaybackPing | null>(null);
+  const [playbackTrailPings, setPlaybackTrailPings] = useState<TelemetryPlaybackPing[]>([]);
   const [showTrails, setShowTrails] = useState<boolean>(true);
   const [showHeatmap, setShowHeatmap] = useState<boolean>(false);
   const [showOrders, setShowOrders] = useState<boolean>(true);
@@ -141,6 +146,59 @@ function ControlRoom() {
           timestamp: Date.now(),
         },
       ]);
+    } else if (event.eventType === 'vehicle.repositioned') {
+      setNotifications((prev) => [
+        ...prev,
+        {
+          id: event.eventId,
+          type: 'info',
+          title: `🤖 AI Anticipatory Rebalance: ${event.entityId}`,
+          message: `${payload?.reason || 'Courier repositioned to deficit district.'}`,
+          timestamp: Date.now(),
+        },
+      ]);
+    } else if (event.eventType === 'chaos.injected') {
+      setNotifications((prev) => [
+        ...prev,
+        {
+          id: event.eventId,
+          type: 'error',
+          title: `⚡ Chaos Event: ${payload?.name || 'Urban Crisis'}`,
+          message: `${payload?.description || 'Disruption active'}. Dynamic self-healing engaged.`,
+          timestamp: Date.now(),
+        },
+      ]);
+    } else if (event.eventType === 'chaos.self_healed') {
+      setNotifications((prev) => [
+        ...prev,
+        {
+          id: event.eventId,
+          type: 'success',
+          title: `💚 Crisis Self-Healed: ${payload?.name || 'Road Cleared'}`,
+          message: `Normal road conditions restored at ${payload?.locationName || 'Phnom Penh corridor'}.`,
+          timestamp: Date.now(),
+        },
+      ]);
+    }
+  }, []);
+
+  const handleToggleChaos = useCallback(async (mode: ChaosMode) => {
+    try {
+      await fetch('/api/simulation/chaos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+    } catch {
+      // Non-blocking
+    }
+  }, []);
+
+  const handleTriggerAiRebalance = useCallback(async () => {
+    try {
+      await fetch('/api/ai/predictive/rebalance', { method: 'POST' });
+    } catch {
+      // Non-blocking
     }
   }, []);
 
@@ -217,11 +275,14 @@ function ControlRoom() {
       } else if (e.key === 'c' || e.key === 'C') {
         if (selectedVehicleId) setChaseMode((prev) => !prev);
       } else if (e.key === 'Escape') {
-        if (incidentModalOpen || benchmarkModalOpen || graphModalOpen || dispatchModalOpen) {
+        if (incidentModalOpen || benchmarkModalOpen || graphModalOpen || dispatchModalOpen || playbackModalOpen) {
           setIncidentModalOpen(false);
           setBenchmarkModalOpen(false);
           setGraphModalOpen(false);
           setDispatchModalOpen(false);
+          setPlaybackModalOpen(false);
+          setPlaybackCurrentPing(null);
+          setPlaybackTrailPings([]);
         } else if (analyticsOpen) {
           setAnalyticsOpen(false);
         } else if (chaseMode) {
@@ -246,6 +307,7 @@ function ControlRoom() {
     benchmarkModalOpen,
     graphModalOpen,
     dispatchModalOpen,
+    playbackModalOpen,
   ]);
 
   const handleInjectIncident = async (event: {
@@ -343,6 +405,12 @@ function ControlRoom() {
         onOpenBenchmark={() => setBenchmarkModalOpen(true)}
         onOpenGraph={() => setGraphModalOpen(true)}
         onOpenDispatchOrder={() => setDispatchModalOpen(true)}
+        onOpenPlayback={() => {
+          setPlaybackVehicleId(selectedVehicleId || vehicles[0]?.id || null);
+          setPlaybackModalOpen(true);
+        }}
+        chaosMode={state.chaosMode || 'off'}
+        onToggleChaos={handleToggleChaos}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -361,6 +429,8 @@ function ControlRoom() {
           onToggleLegend={() => setShowLegend((prev) => !prev)}
           chaseMode={chaseMode}
           onToggleChaseMode={() => setChaseMode((prev) => !prev)}
+          playbackCurrentPing={playbackCurrentPing}
+          playbackTrailPings={playbackTrailPings}
         />
 
         {selectedVehicle && (
@@ -375,6 +445,10 @@ function ControlRoom() {
             onInjectEvent={handleInjectIncident}
             isChaseMode={chaseMode}
             onToggleChaseMode={() => setChaseMode((prev) => !prev)}
+            onOpenTripPlayback={(vId) => {
+              setPlaybackVehicleId(vId);
+              setPlaybackModalOpen(true);
+            }}
           />
         )}
       </div>
@@ -390,6 +464,8 @@ function ControlRoom() {
         activeRoutingAlgorithm={state.benchmarkStats?.routingAlgorithm}
         activeDispatchStrategy={state.benchmarkStats?.dispatchStrategy}
         totalVehiclesCount={vehicles.length}
+        predictiveAi={state.predictiveAi}
+        onTriggerRebalance={handleTriggerAiRebalance}
       />
 
       <IncidentPanel
@@ -422,6 +498,21 @@ function ControlRoom() {
         onTrackVehicle={(vehicleId) => {
           setSelectedVehicleId(vehicleId);
           setChaseMode(true);
+        }}
+      />
+
+      <TripPlaybackModal
+        isOpen={playbackModalOpen}
+        onClose={() => {
+          setPlaybackModalOpen(false);
+          setPlaybackCurrentPing(null);
+          setPlaybackTrailPings([]);
+        }}
+        vehicles={vehicles}
+        initialVehicleId={playbackVehicleId}
+        onPlaybackUpdate={(currentPing, allPings) => {
+          setPlaybackCurrentPing(currentPing);
+          setPlaybackTrailPings(allPings);
         }}
       />
 

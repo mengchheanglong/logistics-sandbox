@@ -39,12 +39,12 @@ export function setupRoutes(engine: SimulationEngine): Router {
 
   router.post('/simulation/pause', (req, res) => {
     engine.pause();
-    res.json({ status: 'paused' });
+    res.json({ status: 'paused', simulationStatus: 'paused' });
   });
 
   router.post('/simulation/resume', (req, res) => {
     engine.resume();
-    res.json({ status: 'resumed' });
+    res.json({ status: 'resumed', simulationStatus: 'running' });
   });
 
   router.post('/simulation/algorithm', (req, res) => {
@@ -90,9 +90,13 @@ export function setupRoutes(engine: SimulationEngine): Router {
     else res.status(404).json({ error: 'Order not found' });
   });
 
-  router.post('/events/inject', (req, res) => {
-    const result = engine.injectEvent(req.body);
-    res.json({ status: 'event_injected', ...result });
+  router.post('/events/inject', async (req, res) => {
+    try {
+      const result = await engine.injectEventAsync(req.body || {});
+      res.json({ status: 'event_injected', ...result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err?.message || 'Failed to inject event' });
+    }
   });
 
   router.get('/scenarios', (req, res) => {
@@ -105,6 +109,16 @@ export function setupRoutes(engine: SimulationEngine): Router {
       res.status(400).json({ error: 'scenarioId is required' });
       return;
     }
+    const result = engine.loadScenario(scenarioId, { seedOrders: true });
+    if (!result.success) {
+      res.status(404).json(result);
+    } else {
+      res.json(result);
+    }
+  });
+
+  router.post('/scenarios/:id/load', (req, res) => {
+    const scenarioId = req.params.id;
     const result = engine.loadScenario(scenarioId, { seedOrders: true });
     if (!result.success) {
       res.status(404).json(result);
@@ -323,6 +337,98 @@ export function setupRoutes(engine: SimulationEngine): Router {
       message: 'World topology synchronized to Neo4j relationship graph',
       status: engine.persistence.relationships.getStatus(),
     });
+  });
+
+  // Phase 4: Historical Cassandra Telemetry Time-Series Trip Playback
+  router.get('/telemetry/playback', async (req, res) => {
+    const riderId = (req.query.riderId as string) || (req.query.vehicleId as string);
+    if (!riderId) {
+      res.status(400).json({ error: 'riderId or vehicleId query parameter is required' });
+      return;
+    }
+
+    // Try finding vehicle driver ID if vehicle ID was passed
+    const vehicle = engine.world.getVehicle(riderId);
+    const targetRiderId = vehicle?.driverId || riderId;
+
+    const limit = Math.min(1000, Number(req.query.limit) || 250);
+    const startMs = req.query.startTime ? Number(req.query.startTime) : undefined;
+    const endMs = req.query.endTime ? Number(req.query.endTime) : undefined;
+
+    let pings = [];
+    if (startMs !== undefined && endMs !== undefined) {
+      pings = await engine.persistence.telemetry.getPingsByTimeRange(targetRiderId, startMs, endMs);
+    } else {
+      pings = await engine.persistence.telemetry.getRecentPings(targetRiderId, limit);
+    }
+
+    // Sort chronologically ascending (oldest to newest) for smooth playback progression
+    pings.sort((a, b) => a.ping_timestamp - b.ping_timestamp);
+
+    // Compute playback trip metadata
+    const maxSpeedKmh = pings.reduce((max, p) => Math.max(max, p.speed_kmh || 0), 0);
+    const avgSpeedKmh = pings.length > 0
+      ? pings.reduce((sum, p) => sum + (p.speed_kmh || 0), 0) / pings.length
+      : 0;
+
+    const startPing = pings[0];
+    const endPing = pings[pings.length - 1];
+    const durationSeconds = startPing && endPing
+      ? Math.max(0, Math.round((endPing.ping_timestamp - startPing.ping_timestamp) / 1000))
+      : 0;
+
+    res.json({
+      riderId: targetRiderId,
+      vehicleId: vehicle?.id || null,
+      vehicleName: vehicle?.name || targetRiderId,
+      count: pings.length,
+      pings,
+      summary: {
+        startTime: startPing?.ping_timestamp || null,
+        endTime: endPing?.ping_timestamp || null,
+        durationSeconds,
+        maxSpeedKmh: Number(maxSpeedKmh.toFixed(1)),
+        avgSpeedKmh: Number(avgSpeedKmh.toFixed(1)),
+        startCoord: startPing ? { lat: startPing.lat, lon: startPing.lon } : null,
+        endCoord: endPing ? { lat: endPing.lat, lon: endPing.lon } : null,
+      },
+    });
+  });
+
+  // Phase 4: AI Predictive Ops & District Forecasting Endpoints
+  router.get('/ai/predictive/status', (req, res) => {
+    res.json(engine.getPredictiveAiMetrics());
+  });
+
+  router.post('/ai/predictive/rebalance', async (req, res) => {
+    const result = await engine.triggerPredictiveRebalance();
+    res.json(result);
+  });
+
+  // Feature: Automated SLA Breach Risk Mitigation Directive
+  router.post('/ai/predictive/mitigate', async (req, res) => {
+    const { orderId } = req.body || {};
+    if (!orderId) {
+      res.status(400).json({ error: 'orderId is required' });
+      return;
+    }
+    const result = await engine.mitigateSlaBreachRisk(orderId);
+    res.json(result);
+  });
+
+  // Feature: Phnom Penh Urban Chaos Engine (Crisis Simulation & Self-Healing)
+  router.get('/simulation/chaos', (req, res) => {
+    res.json(engine.getChaosMetrics());
+  });
+
+  router.post('/simulation/chaos', (req, res) => {
+    const { mode } = req.body || {};
+    if (['off', 'low', 'medium', 'extreme'].includes(mode)) {
+      engine.setChaosMode(mode);
+      res.json({ success: true, mode, metrics: engine.getChaosMetrics() });
+    } else {
+      res.status(400).json({ error: 'Invalid mode. Must be: off, low, medium, or extreme.' });
+    }
   });
 
   return router;

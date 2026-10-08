@@ -98,6 +98,8 @@ export interface SimulationStats {
   slaBreachedDeliveries?: number;
   slaComplianceRate?: number;
   atRiskOrdersCount?: number;
+  aiRebalancesCount?: number;
+  slaBreachesAverted?: number;
 }
 
 export interface ScenarioInfo {
@@ -129,7 +131,83 @@ export type DispatchStrategy =
   | 'nearest_available'
   | 'route_aware'
   | 'cluster_zone'
-  | 'multi_stop_tour';
+  | 'multi_stop_tour'
+  | 'predictive_ai';
+
+export interface DistrictDemandForecast {
+  districtId: string;
+  districtName: string;
+  center: Coordinate;
+  currentPendingOrders: number;
+  forecastedDemandIndex: number;
+  activeCouriers: number;
+  idleCouriers: number;
+  deficitScore: number;
+  status: 'balanced' | 'surplus' | 'deficit' | 'critical';
+}
+
+export interface SlaRiskPrediction {
+  orderId: string;
+  priority: string;
+  vehicleId: string;
+  driverId?: string;
+  remainingDistanceKm: number;
+  estimatedArrivalMs: number;
+  slaDeadline: number;
+  marginMinutes: number;
+  riskScore: number;
+  riskLevel: 'nominal' | 'moderate' | 'high' | 'critical';
+  recommendedAction?: string;
+}
+
+export interface AiRebalancingAction {
+  id: string;
+  simTimestamp: number;
+  vehicleId: string;
+  fromDistrict: string;
+  toDistrict: string;
+  targetPosition: Coordinate;
+  reason: string;
+  estimatedArrivalSimTime: number;
+}
+
+export interface PredictiveAiMetrics {
+  activeRebalancingActions: number;
+  totalRebalancesExecuted: number;
+  slaBreachRiskAvertedCount: number;
+  districtForecasts: DistrictDemandForecast[];
+  topAtRiskDeliveries: SlaRiskPrediction[];
+  recentRebalancingActions: AiRebalancingAction[];
+  modelEfficiencyScore: number;
+}
+
+export interface TelemetryPlaybackPing {
+  rider_id: string;
+  ping_timestamp: number;
+  ping_date: string;
+  lat: number;
+  lon: number;
+  speed_kmh: number;
+  battery_level: number;
+  status: string;
+}
+
+export interface TelemetryPlaybackData {
+  riderId: string;
+  vehicleId: string | null;
+  vehicleName: string;
+  count: number;
+  pings: TelemetryPlaybackPing[];
+  summary: {
+    startTime: number | null;
+    endTime: number | null;
+    durationSeconds: number;
+    maxSpeedKmh: number;
+    avgSpeedKmh: number;
+    startCoord: Coordinate | null;
+    endCoord: Coordinate | null;
+  };
+}
 
 export interface AlgorithmBenchmarkStats {
   routingAlgorithm: RoutingAlgorithm;
@@ -154,6 +232,8 @@ export interface RoadIncident {
   active: boolean;
 }
 
+export type ChaosMode = 'off' | 'low' | 'medium' | 'extreme';
+
 export interface SimulationState {
   simulationId: string;
   simTime: number;
@@ -169,6 +249,9 @@ export interface SimulationState {
   incidents?: RoadIncident[];
   activeScenarioId?: string;
   persistence?: any;
+  predictiveAi?: PredictiveAiMetrics;
+  chaosMode?: ChaosMode;
+  chaosActiveEventsCount?: number;
 }
 
 export interface SimulationEvent {

@@ -8,6 +8,7 @@ interface VehiclePanelProps {
   onInjectEvent?: (event: { type: string; targetId?: string; payload?: Record<string, unknown> }) => void;
   isChaseMode?: boolean;
   onToggleChaseMode?: () => void;
+  onOpenTripPlayback?: (vehicleId: string) => void;
 }
 
 export function VehiclePanel({
@@ -18,6 +19,7 @@ export function VehiclePanel({
   onInjectEvent,
   isChaseMode = false,
   onToggleChaseMode,
+  onOpenTripPlayback,
 }: VehiclePanelProps) {
   const loadPercent = Math.min(100, Math.round((vehicle.currentLoad_kg / (vehicle.capacity_kg || 1)) * 100));
   const progressPercent = Math.min(100, Math.round(vehicle.routeProgress * 100));
@@ -115,6 +117,17 @@ export function VehiclePanel({
             >
               <span>{isChaseMode ? '✕' : '🎥'}</span>
               <span>{isChaseMode ? 'EXIT 3D CHASE CAM (ESC)' : 'ENGAGE 3D CHASE CAM'}</span>
+            </button>
+          )}
+
+          {onOpenTripPlayback && (
+            <button
+              onClick={() => onOpenTripPlayback(vehicle.id)}
+              className="w-full py-2 px-3 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border bg-slate-950/80 hover:bg-cyan-950/40 text-cyan-300 border-cyan-500/40 hover:border-cyan-400 shadow-sm"
+              title="Open Cassandra Historical Telemetry Scrubber"
+            >
+              <span>📼</span>
+              <span>REPLAY TRIP HISTORY (CASSANDRA)</span>
             </button>
           )}
         </div>

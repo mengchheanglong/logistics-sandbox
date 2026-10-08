@@ -125,6 +125,8 @@ export interface SimulationStats {
   slaBreachedDeliveries?: number;
   slaComplianceRate?: number;
   atRiskOrdersCount?: number;
+  aiRebalancesCount?: number;
+  slaBreachesAverted?: number;
 }
 
 export interface EcommerceBridgeStatus {
@@ -147,7 +149,64 @@ export type DispatchStrategy =
   | 'nearest_available'
   | 'route_aware'
   | 'cluster_zone'
-  | 'multi_stop_tour';
+  | 'multi_stop_tour'
+  | 'predictive_ai';
+
+export interface DistrictZone {
+  id: string;
+  name: string;
+  center: Coordinate;
+  radiusM: number;
+  demandWeight: number; // relative customer demand density factor
+  stagingPoint: Coordinate;
+}
+
+export interface DistrictDemandForecast {
+  districtId: string;
+  districtName: string;
+  center: Coordinate;
+  currentPendingOrders: number;
+  forecastedDemandIndex: number; // 0 to 100
+  activeCouriers: number;
+  idleCouriers: number;
+  deficitScore: number; // positive = courier shortage, negative = surplus
+  status: 'balanced' | 'surplus' | 'deficit' | 'critical';
+}
+
+export interface SlaRiskPrediction {
+  orderId: string;
+  priority: string;
+  vehicleId: string;
+  driverId?: string;
+  remainingDistanceKm: number;
+  estimatedArrivalMs: number;
+  slaDeadline: number;
+  marginMinutes: number; // positive = buffer minutes, negative = overdue
+  riskScore: number; // 0 to 100%
+  riskLevel: 'nominal' | 'moderate' | 'high' | 'critical';
+  recommendedAction?: string;
+}
+
+export interface AiRebalancingAction {
+  id: string;
+  simTimestamp: number;
+  vehicleId: string;
+  fromDistrict: string;
+  toDistrict: string;
+  targetPosition: Coordinate;
+  reason: string;
+  estimatedArrivalSimTime: number;
+}
+
+export interface PredictiveAiMetrics {
+  activeRebalancingActions: number;
+  totalRebalancesExecuted: number;
+  slaBreachRiskAvertedCount: number;
+  districtForecasts: DistrictDemandForecast[];
+  topAtRiskDeliveries: SlaRiskPrediction[];
+  recentRebalancingActions: AiRebalancingAction[];
+  modelEfficiencyScore: number; // 0 to 100%
+}
 
 export interface AlgorithmBenchmarkStats {
   routingAlgorithm: RoutingAlgorithm;
@@ -172,6 +231,18 @@ export interface RoadIncident {
   active: boolean;
 }
 
+export type ChaosMode = 'off' | 'low' | 'medium' | 'extreme';
+
+export interface ChaosIncidentEvent {
+  id: string;
+  name: string;
+  description: string;
+  type: string;
+  locationName: string;
+  triggeredAtSimMs: number;
+  autoHealAtSimMs: number;
+}
+
 export interface SimulationState {
   simulationId: string;
   simTime: number;
@@ -187,6 +258,9 @@ export interface SimulationState {
   incidents?: RoadIncident[];
   activeScenarioId?: string;
   persistence?: any;
+  predictiveAi?: PredictiveAiMetrics;
+  chaosMode?: ChaosMode;
+  chaosActiveEventsCount?: number;
 }
 
 export interface DepotConfig {

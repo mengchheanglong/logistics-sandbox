@@ -74,6 +74,32 @@ export const SCENARIO_PRESETS: Record<string, ScenarioConfig> = {
       },
     ],
   },
+
+  ai_surge_rebalance: {
+    id: 'ai_surge_rebalance',
+    name: 'Suburban Surge & AI Predictive Rebalancing',
+    description: 'Heavy demand surge across Sen Sok & Meanchey suburbs. Tests autonomous AI anticipatory fleet repositioning and dynamic SLA breach risk avoidance.',
+    seed: 314,
+    city: 'Phnom Penh, Cambodia',
+    bounds: { north: 11.60, south: 11.52, east: 104.96, west: 104.88 },
+    vehicleCount: 36,
+    orderCount: 240,
+    depots: [
+      { id: 'depot-a', name: 'Central Market Depot', position: { lat: 11.5680, lon: 104.9223 } },
+      { id: 'depot-b', name: 'Russian Market Depot', position: { lat: 11.5490, lon: 104.9280 } },
+    ],
+    duration_hours: 8,
+    trafficEnabled: true,
+    incidents: [
+      {
+        type: 'road_work',
+        description: 'Russian Blvd Underpass Maintenance',
+        position: { lat: 11.566, lon: 104.899 },
+        radiusM: 350,
+        severity: 'medium',
+      },
+    ],
+  },
 };
 
 export const defaultScenario = SCENARIO_PRESETS.morning_delivery;
