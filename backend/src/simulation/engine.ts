@@ -613,8 +613,8 @@ export class SimulationEngine {
             vehicle.routeGeometry = result.route.path;
             vehicle.routeProgress = 0;
             vehicle.routeDistanceM = result.route.distanceM;
-            // Guarantee minimum observable duration (15s real-time at 1x) so operator can watch courier
-            vehicle.routeDurationS = Math.max(result.route.durationS, 900);
+            // Guarantee minimum observable duration (60s real-time at 1x) so customer & operator can watch courier progression
+            vehicle.routeDurationS = Math.max(result.route.durationS, 3600);
             vehicle.currentRouteId = `R-${order.id}`;
             vehicle.currentLoad_kg = order.totalWeight_kg;
             vehicle.trailHistory = [[vehicle.position.lon, vehicle.position.lat, this.clock.getSimulatedTime()]];
@@ -729,8 +729,8 @@ export class SimulationEngine {
       }
     }
 
-    // Emit position update event & stream Cassandra ping to ecommerce-hive-nosql (throttled)
-    if (Math.random() < 0.1) {
+    // Emit position update event & stream Cassandra ping to ecommerce-hive-nosql (every 5 ticks = 500ms)
+    if (this.tickCounter % 5 === 0) {
       this.emitEvent('vehicle', vehicle.id, 'vehicle.position.updated', {
         lat: newPosition.lat,
         lon: newPosition.lon,

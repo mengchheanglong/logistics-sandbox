@@ -115,15 +115,16 @@ function ControlRoom() {
         },
       ]);
     } else if (event.eventType === 'order.assigned' && payload?.vehicleId) {
-      // Auto-focus camera and open panel for the assigned courier
+      // Auto-focus camera and activate 3D Chase Mode for the assigned courier
       setSelectedVehicleId(payload.vehicleId);
+      setChaseMode(true);
       setNotifications((prev) => [
         ...prev,
         {
           id: event.eventId,
           type: 'success',
           title: `🚚 Courier Dispatched: ${event.entityId}`,
-          message: `Assigned to vehicle ${payload.vehicleId}. Live routing along OSM road network.`,
+          message: `Assigned to vehicle ${payload.vehicleId}. 3D Chase Camera tracking live road navigation.`,
           timestamp: Date.now(),
         },
       ]);
