@@ -117,19 +117,19 @@ function ControlRoom() {
         },
       ]);
     } else if (event.eventType === 'order.assigned' && payload?.vehicleId) {
-      // Auto-focus camera and activate 3D Chase Mode for the assigned courier
-      setSelectedVehicleId(payload.vehicleId);
-      setChaseMode(true);
-      setNotifications((prev) => [
-        ...prev,
-        {
-          id: event.eventId,
-          type: 'success',
-          title: `🚚 Courier Dispatched: ${event.entityId}`,
-          message: `Assigned to vehicle ${payload.vehicleId}. 3D Chase Camera tracking live road navigation.`,
-          timestamp: Date.now(),
-        },
-      ]);
+      // Non-intrusive logging for operator-injected orders (never hijack operator camera)
+      if (payload?.source === 'operator_injection') {
+        setNotifications((prev) => [
+          ...prev,
+          {
+            id: event.eventId,
+            type: 'info',
+            title: `🚚 Courier Dispatched: ${event.entityId}`,
+            message: `Assigned to ${payload.vehicleId}.`,
+            timestamp: Date.now(),
+          },
+        ]);
+      }
     } else if (event.eventType === 'order.delivered') {
       setNotifications((prev) => [
         ...prev,
@@ -185,6 +185,13 @@ function ControlRoom() {
     });
   }, [state?.simTime, state?.stats?.deliveredOrders, state?.stats?.activeVehicles]);
 
+  // Safety: If selectedVehicleId is cleared, ensure chaseMode is always disabled
+  useEffect(() => {
+    if (!selectedVehicleId && chaseMode) {
+      setChaseMode(false);
+    }
+  }, [selectedVehicleId, chaseMode]);
+
   // Keyboard Shortcuts for Mission Control
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -210,23 +217,36 @@ function ControlRoom() {
       } else if (e.key === 'c' || e.key === 'C') {
         if (selectedVehicleId) setChaseMode((prev) => !prev);
       } else if (e.key === 'Escape') {
-        if (chaseMode) {
-          setChaseMode(false);
-        } else if (analyticsOpen) {
-          setAnalyticsOpen(false);
-        } else {
-          setSelectedVehicleId(null);
+        if (incidentModalOpen || benchmarkModalOpen || graphModalOpen || dispatchModalOpen) {
           setIncidentModalOpen(false);
           setBenchmarkModalOpen(false);
           setGraphModalOpen(false);
           setDispatchModalOpen(false);
+        } else if (analyticsOpen) {
+          setAnalyticsOpen(false);
+        } else if (chaseMode) {
+          setChaseMode(false);
+          setSelectedVehicleId(null);
+        } else if (selectedVehicleId) {
+          setSelectedVehicleId(null);
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [state?.status, pauseSimulation, resumeSimulation, chaseMode, analyticsOpen, selectedVehicleId]);
+  }, [
+    state?.status,
+    pauseSimulation,
+    resumeSimulation,
+    chaseMode,
+    analyticsOpen,
+    selectedVehicleId,
+    incidentModalOpen,
+    benchmarkModalOpen,
+    graphModalOpen,
+    dispatchModalOpen,
+  ]);
 
   const handleInjectIncident = async (event: {
     type: string;

@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import Map from 'react-map-gl/maplibre';
 import { DeckGL } from '@deck.gl/react';
 import { ScatterplotLayer, PathLayer, TextLayer } from '@deck.gl/layers';
@@ -170,6 +170,19 @@ export function MapView({
       bearing: targetBearing !== null && !isNaN(targetBearing) ? targetBearing : prev.bearing,
     }));
   }, [chaseMode, selectedVehicleId, vehicles]);
+
+  // Smoothly restore natural camera angle when chase mode disengages
+  const prevChaseModeRef = useRef(chaseMode);
+  useEffect(() => {
+    if (prevChaseModeRef.current && !chaseMode) {
+      setViewState((prev) => ({
+        ...prev,
+        pitch: 30,
+        bearing: 0,
+      }));
+    }
+    prevChaseModeRef.current = chaseMode;
+  }, [chaseMode]);
 
   // Interactive Map Navigation Controls
   const handleZoomIn = () => setViewState((prev) => ({ ...prev, zoom: Math.min(18, prev.zoom + 1) }));
@@ -634,7 +647,17 @@ export function MapView({
     <div className="map-container relative flex-1 h-full w-full">
       <DeckGL
         viewState={viewState}
-        onViewStateChange={({ viewState }: any) => setViewState(viewState)}
+        onViewStateChange={({ viewState, interactionState }: any) => {
+          // If the operator manually drags, pans, or rotates while chase mode is active, disengage immediately
+          if (
+            chaseMode &&
+            (interactionState?.isDragging || interactionState?.isPanning || interactionState?.isRotating) &&
+            onToggleChaseMode
+          ) {
+            onToggleChaseMode();
+          }
+          setViewState(viewState);
+        }}
         controller={true}
         layers={layers}
         getTooltip={getTooltip}
@@ -645,7 +668,7 @@ export function MapView({
 
       {/* 3D Chase Camera Active Tracker Banner */}
       {chaseMode && selectedVehicle && (
-        <div className="absolute top-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 bg-slate-950/92 backdrop-blur-md px-4 py-2 rounded-full border border-cyan-400/60 shadow-[0_0_25px_rgba(0,240,255,0.35)] text-xs font-mono select-none animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute top-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 bg-slate-950/95 backdrop-blur-md px-4 py-2 rounded-full border border-cyan-400/80 shadow-[0_0_30px_rgba(0,240,255,0.4)] text-xs font-mono select-none animate-in fade-in zoom-in-95 duration-150">
           <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
           <span className="font-bold text-cyan-300">
             CHASE CAM: {selectedVehicle.name} ({selectedVehicle.id})
@@ -659,10 +682,10 @@ export function MapView({
           {onToggleChaseMode && (
             <button
               onClick={onToggleChaseMode}
-              className="ml-2 px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/40 text-[10px] font-bold cursor-pointer transition-colors"
-              title="Exit Chase Camera (Esc)"
+              className="ml-2 px-3 py-1 rounded-full bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/50 cursor-pointer transition-all flex items-center gap-1 active:scale-95"
+              title="Exit Chase Camera (Esc or Drag Map)"
             >
-              EXIT (ESC)
+              <span>✕</span> EXIT 3D (ESC)
             </button>
           )}
         </div>

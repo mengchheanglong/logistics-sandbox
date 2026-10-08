@@ -109,12 +109,12 @@ export function VehiclePanel({
               onClick={onToggleChaseMode}
               className={`w-full py-2 px-3 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border ${
                 isChaseMode
-                  ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400 shadow-[0_0_15px_rgba(0,240,255,0.4)] animate-pulse'
+                  ? 'bg-rose-600/30 text-rose-200 border-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]'
                   : 'bg-slate-950/80 hover:bg-slate-800 text-cyan-400 border-cyan-500/40 hover:border-cyan-400'
               }`}
             >
-              <span>🎥</span>
-              <span>{isChaseMode ? 'EXIT 3D CHASE CAM' : 'ENGAGE 3D CHASE CAM'}</span>
+              <span>{isChaseMode ? '✕' : '🎥'}</span>
+              <span>{isChaseMode ? 'EXIT 3D CHASE CAM (ESC)' : 'ENGAGE 3D CHASE CAM'}</span>
             </button>
           )}
         </div>
