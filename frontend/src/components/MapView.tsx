@@ -3,8 +3,20 @@ import Map from 'react-map-gl/maplibre';
 import { DeckGL } from '@deck.gl/react';
 import { ScatterplotLayer, PathLayer, TextLayer } from '@deck.gl/layers';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
-import type { Vehicle, Warehouse, RoadIncident, Order } from '../types';
+import type { Vehicle, Warehouse, RoadIncident, Order, Coordinate } from '../types';
 import 'maplibre-gl/dist/maplibre-gl.css';
+
+export interface DestinationInfo {
+  id: string;
+  vehicleId: string;
+  type: 'order_drop' | 'depot_return';
+  label: string;
+  position: Coordinate;
+  distanceKm: number;
+  priority?: string;
+  slaStatus?: string;
+  orderId?: string;
+}
 
 /**
  * Calculates forward azimuth bearing (degrees 0-360) between two coordinates.
@@ -28,6 +40,55 @@ export function calculateBearing(
 
   const bearing = (Math.atan2(y, x) * 180) / Math.PI;
   return (bearing + 360) % 360;
+}
+
+/**
+ * Calculates great-circle haversine distance between two coordinates in kilometers.
+ */
+export function haversineDistanceKm(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Extracts remaining route path along road network from vehicle position to destination.
+ */
+export function getRemainingPath(
+  currentPos: Coordinate,
+  fullPath: [number, number][],
+  progress: number
+): [number, number][] {
+  if (!fullPath || fullPath.length < 2) return [];
+
+  const targetIndex = Math.min(
+    fullPath.length - 1,
+    Math.max(0, Math.floor(progress * (fullPath.length - 1)))
+  );
+
+  const remaining: [number, number][] = [
+    [currentPos.lon, currentPos.lat],
+    ...fullPath.slice(targetIndex + 1),
+  ];
+
+  if (remaining.length === 1 && fullPath.length > 0) {
+    remaining.push(fullPath[fullPath.length - 1]);
+  }
+
+  return remaining;
 }
 
 const DEFAULT_CENTER = {
@@ -196,6 +257,139 @@ export function MapView({
   const handleToggleTheme = () =>
     setMapTheme((prev) => (prev === 'dark' ? 'liberty' : 'dark'));
 
+  // Focus View: when a vehicle is selected, default to showing ONLY its destinations
+  const [focusDestinationOnly, setFocusDestinationOnly] = useState<boolean>(true);
+
+  // Automatically reset to focused destination view whenever vehicle selection changes
+  useEffect(() => {
+    if (selectedVehicleId) {
+      setFocusDestinationOnly(true);
+    }
+  }, [selectedVehicleId]);
+
+  const selectedVehicle = useMemo(
+    () => (selectedVehicleId ? vehicles.find((v) => v.id === selectedVehicleId) : null),
+    [vehicles, selectedVehicleId]
+  );
+
+  // Extract all forward destinations for the selected vehicle
+  const selectedDestinations = useMemo(() => {
+    if (!selectedVehicle) return [];
+    const list: DestinationInfo[] = [];
+
+    // 1. Multi-stop route legs
+    if (selectedVehicle.routeLegs && selectedVehicle.routeLegs.length > 0) {
+      selectedVehicle.routeLegs.forEach((leg, idx) => {
+        const isPending = idx >= (selectedVehicle.currentLegIndex ?? 0);
+        if (!isPending) return;
+
+        if (leg.orderId) {
+          const ord = orders.find((o) => o.id === leg.orderId);
+          const distKm = haversineDistanceKm(
+            selectedVehicle.position.lat,
+            selectedVehicle.position.lon,
+            leg.destination.lat,
+            leg.destination.lon
+          );
+          list.push({
+            id: `dest-${selectedVehicle.id}-${leg.orderId}-${idx}`,
+            vehicleId: selectedVehicle.id,
+            type: 'order_drop',
+            label: `Drop #${idx + 1}: ${leg.orderId}`,
+            position: leg.destination,
+            distanceKm: distKm,
+            priority: ord?.priority || 'standard',
+            slaStatus: ord?.slaStatus,
+            orderId: leg.orderId,
+          });
+        } else {
+          const depot = warehouses.find((w) => w.id === selectedVehicle.depotId);
+          const distKm = haversineDistanceKm(
+            selectedVehicle.position.lat,
+            selectedVehicle.position.lon,
+            leg.destination.lat,
+            leg.destination.lon
+          );
+          list.push({
+            id: `dest-${selectedVehicle.id}-depot-${idx}`,
+            vehicleId: selectedVehicle.id,
+            type: 'depot_return',
+            label: `Return to ${depot?.name || 'Depot'}`,
+            position: leg.destination,
+            distanceKm: distKm,
+          });
+        }
+      });
+    } else {
+      // 2. Assigned orders or return to depot
+      if (selectedVehicle.assignedOrderIds && selectedVehicle.assignedOrderIds.length > 0) {
+        selectedVehicle.assignedOrderIds.forEach((orderId, idx) => {
+          const ord = orders.find((o) => o.id === orderId);
+          if (ord) {
+            const distKm = haversineDistanceKm(
+              selectedVehicle.position.lat,
+              selectedVehicle.position.lon,
+              ord.deliveryLocation.lat,
+              ord.deliveryLocation.lon
+            );
+            list.push({
+              id: `dest-${selectedVehicle.id}-${orderId}-${idx}`,
+              vehicleId: selectedVehicle.id,
+              type: 'order_drop',
+              label: `Order ${orderId}`,
+              position: ord.deliveryLocation,
+              distanceKm: distKm,
+              priority: ord.priority || 'standard',
+              slaStatus: ord.slaStatus,
+              orderId,
+            });
+          }
+        });
+      }
+
+      if (selectedVehicle.status === 'returning' || (list.length === 0 && selectedVehicle.depotId)) {
+        const depot = warehouses.find((w) => w.id === selectedVehicle.depotId);
+        if (depot) {
+          const distKm = haversineDistanceKm(
+            selectedVehicle.position.lat,
+            selectedVehicle.position.lon,
+            depot.position.lat,
+            depot.position.lon
+          );
+          list.push({
+            id: `dest-${selectedVehicle.id}-depot`,
+            vehicleId: selectedVehicle.id,
+            type: 'depot_return',
+            label: `Return to ${depot.name} Depot`,
+            position: depot.position,
+            distanceKm: distKm,
+          });
+        }
+      }
+    }
+
+    // Fallback: If routeGeometry exists but no order was mapped, use endpoint of route geometry
+    if (list.length === 0 && selectedVehicle.routeGeometry && selectedVehicle.routeGeometry.length > 1) {
+      const lastPoint = selectedVehicle.routeGeometry[selectedVehicle.routeGeometry.length - 1];
+      const distKm = haversineDistanceKm(
+        selectedVehicle.position.lat,
+        selectedVehicle.position.lon,
+        lastPoint[1],
+        lastPoint[0]
+      );
+      list.push({
+        id: `dest-${selectedVehicle.id}-endpoint`,
+        vehicleId: selectedVehicle.id,
+        type: 'order_drop',
+        label: `Destination Terminal`,
+        position: { lat: lastPoint[1], lon: lastPoint[0] },
+        distanceKm: distKm,
+      });
+    }
+
+    return list;
+  }, [selectedVehicle, orders, warehouses]);
+
   // Live Entity Counts for Legend HUD
   const fleetCounts = useMemo(() => {
     const counts: Record<string, number> = { en_route: 0, delivering: 0, returning: 0, idle: 0, broken_down: 0 };
@@ -305,6 +499,24 @@ export function MapView({
         };
       }
 
+      // 5. Destination Beacon Tooltip
+      if ('distanceKm' in object && 'label' in object) {
+        const dest = object as DestinationInfo;
+        return {
+          html: `
+            <div style="padding: 10px 12px; background: rgba(15, 23, 42, 0.98); border: 1px solid rgba(245, 158, 11, 0.7); border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.85); font-family: monospace; font-size: 11px; color: #fef08a; line-height: 1.45; min-width: 180px;">
+              <div style="font-weight: bold; font-size: 12px; color: #fbbf24; margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
+                🎯 ${dest.label}
+              </div>
+              <div>Target Type: <span style="color: #f59e0b; font-weight: bold;">${dest.type === 'order_drop' ? 'Customer Delivery Drop' : 'Depot Hub Return'}</span></div>
+              <div>Distance from Courier: <span style="color: #38bdf8; font-weight: bold;">${dest.distanceKm.toFixed(2)} km</span></div>
+              ${dest.priority ? `<div>Priority: <span style="color: #fb923c; text-transform: uppercase;">${dest.priority}</span></div>` : ''}
+              ${dest.slaStatus ? `<div>SLA: <span style="color: ${dest.slaStatus === 'breached' ? '#ef4444' : dest.slaStatus === 'at_risk' ? '#f59e0b' : '#10b981'}; font-weight: bold;">${dest.slaStatus.toUpperCase()}</span></div>` : ''}
+            </div>
+          `,
+        };
+      }
+
       return null;
     },
     []
@@ -340,16 +552,105 @@ export function MapView({
       pickable: false,
       widthScale: 1,
       widthMinPixels: 1.5,
-      widthMaxPixels: 6,
+      widthMaxPixels: 5,
       getPath: (d: Vehicle) => d.routeGeometry,
       getColor: (d: Vehicle) =>
         d.id === selectedVehicleId
-          ? [0, 240, 255, 240] // Vivid cyan highlighted corridor
-          : [70, 130, 210, 35], // Faint subtle ambient road network
-      getWidth: (d: Vehicle) => (d.id === selectedVehicleId ? 3.5 : 1.5),
+          ? [0, 240, 255, 180] // Cyan corridor for full planned tour
+          : [70, 130, 210, 25], // Faint subtle ambient road network
+      getWidth: (d: Vehicle) => (d.id === selectedVehicleId ? 2.5 : 1.2),
       updateTriggers: {
         getColor: [selectedVehicleId],
         getWidth: [selectedVehicleId],
+      },
+    });
+
+    // 2b. Luminous Sunburst Halo for Remaining Path to Active Destination (Forward Route)
+    const destinationHaloLayer = new PathLayer({
+      id: 'destination-halo-layer',
+      data: vehicles.filter(
+        (v) =>
+          (v.id === selectedVehicleId || v.status === 'en_route' || v.status === 'returning') &&
+          v.routeGeometry &&
+          v.routeGeometry.length > 1
+      ),
+      pickable: false,
+      widthScale: 1,
+      widthMinPixels: 4,
+      widthMaxPixels: 14,
+      capRounded: true,
+      jointRounded: true,
+      getPath: (v: Vehicle) => getRemainingPath(v.position, v.routeGeometry, v.routeProgress),
+      getColor: (v: Vehicle) =>
+        v.id === selectedVehicleId
+          ? [245, 158, 11, 175] // Radiant Amber halo glow
+          : [245, 158, 11, 45], // Subtle ambient forward path
+      getWidth: (v: Vehicle) => (v.id === selectedVehicleId ? 7.5 : 2),
+      updateTriggers: {
+        getPath: [vehicles.map((v) => `${v.id}:${v.routeProgress.toFixed(3)}:${v.position.lat.toFixed(4)}`).join(',')],
+        getColor: [selectedVehicleId],
+        getWidth: [selectedVehicleId],
+      },
+    });
+
+    // 2c. Crisp Forward Corridor to Target Destination (Distinct Electric Sunburst Gold Line)
+    const destinationRemainingPathLayer = new PathLayer({
+      id: 'destination-remaining-path-layer',
+      data: vehicles.filter(
+        (v) =>
+          (v.id === selectedVehicleId || v.status === 'en_route' || v.status === 'returning') &&
+          v.routeGeometry &&
+          v.routeGeometry.length > 1
+      ),
+      pickable: false,
+      widthScale: 1,
+      widthMinPixels: 2,
+      widthMaxPixels: 7,
+      capRounded: true,
+      jointRounded: true,
+      getPath: (v: Vehicle) => getRemainingPath(v.position, v.routeGeometry, v.routeProgress),
+      getColor: (v: Vehicle) =>
+        v.id === selectedVehicleId
+          ? [254, 240, 138, 255] // Electric Sunburst Gold core
+          : [251, 191, 36, 120],
+      getWidth: (v: Vehicle) => (v.id === selectedVehicleId ? 3.5 : 1.5),
+      updateTriggers: {
+        getPath: [vehicles.map((v) => `${v.id}:${v.routeProgress.toFixed(3)}:${v.position.lat.toFixed(4)}`).join(',')],
+        getColor: [selectedVehicleId],
+        getWidth: [selectedVehicleId],
+      },
+    });
+
+    // 2d. Direct Line-of-Sight Bearing Beam (Direct Vector from Courier to Immediate Destination)
+    const directVectorData =
+      selectedVehicle && selectedDestinations.length > 0
+        ? [
+            {
+              path: [
+                [selectedVehicle.position.lon, selectedVehicle.position.lat] as [number, number],
+                [selectedDestinations[0].position.lon, selectedDestinations[0].position.lat] as [number, number],
+              ],
+            },
+          ]
+        : [];
+
+    const destinationBearingVectorLayer = new PathLayer({
+      id: 'destination-bearing-vector-layer',
+      data: directVectorData,
+      pickable: false,
+      widthScale: 1,
+      widthMinPixels: 1.5,
+      widthMaxPixels: 3.5,
+      getPath: (d: { path: [number, number][] }) => d.path,
+      getColor: [251, 191, 36, 200],
+      getWidth: 2,
+      updateTriggers: {
+        getPath: [
+          selectedVehicle?.position.lat,
+          selectedVehicle?.position.lon,
+          selectedDestinations[0]?.position.lat,
+          selectedDestinations[0]?.position.lon,
+        ],
       },
     });
 
@@ -456,10 +757,19 @@ export function MapView({
       },
     });
 
-    // 5. Customer Delivery Order Drop Pins (Smaller targets, distinct from vehicles)
+    // 5. Customer Delivery Order Drop Pins (Filtered in Focus Mode)
+    const filteredOrders =
+      selectedVehicleId && focusDestinationOnly
+        ? orders.filter(
+            (o) =>
+              o.assignedVehicleId === selectedVehicleId ||
+              selectedVehicle?.assignedOrderIds?.includes(o.id)
+          )
+        : orders.filter((o) => o.status === 'pending' || o.status === 'assigned');
+
     const orderLayer = new ScatterplotLayer({
       id: 'orders-layer',
-      data: orders.filter((o) => o.status === 'pending' || o.status === 'assigned'),
+      data: filteredOrders,
       pickable: true,
       opacity: 0.85,
       stroked: true,
@@ -470,9 +780,8 @@ export function MapView({
       getPosition: (d: Order) => [d.deliveryLocation.lon, d.deliveryLocation.lat],
       getFillColor: (d: Order) => {
         const meta = ORDER_PRIORITY_PALETTE[d.priority || 'standard'] || ORDER_PRIORITY_PALETTE.standard;
-        // If order is already assigned, soften opacity
         if (d.status === 'assigned') {
-          return [meta.fill[0], meta.fill[1], meta.fill[2], 110];
+          return [meta.fill[0], meta.fill[1], meta.fill[2], 140];
         }
         return meta.fill;
       },
@@ -485,8 +794,8 @@ export function MapView({
       },
       visible: showOrders,
       updateTriggers: {
-        getFillColor: [orders.map((o) => `${o.id}:${o.status}:${o.priority}`).join(',')],
-        getLineColor: [orders.map((o) => `${o.id}:${o.status}`).join(',')],
+        getFillColor: [filteredOrders.map((o) => `${o.id}:${o.status}:${o.priority}`).join(',')],
+        getLineColor: [filteredOrders.map((o) => `${o.id}:${o.status}`).join(',')],
         visible: [showOrders],
       },
     });
@@ -539,6 +848,66 @@ export function MapView({
       fontFamily: 'monospace',
       fontWeight: 'bold',
       characterSet: 'auto',
+    });
+
+    // 6d. Destination Target Bullseye Halo (Pulsing Target Ring for Focus View)
+    const destinationTargetBeaconLayer = new ScatterplotLayer({
+      id: 'destination-target-beacon-layer',
+      data: selectedDestinations,
+      pickable: true,
+      opacity: 1,
+      stroked: true,
+      filled: true,
+      radiusMinPixels: 14,
+      radiusMaxPixels: 26,
+      lineWidthMinPixels: 2.5,
+      getPosition: (d: DestinationInfo) => [d.position.lon, d.position.lat],
+      getFillColor: [245, 158, 11, 75],
+      getLineColor: [251, 191, 36, 255],
+      updateTriggers: {
+        getPosition: [selectedDestinations.map((d) => `${d.position.lon},${d.position.lat}`).join(',')],
+      },
+    });
+
+    // 6e. Destination Target Pin Core
+    const destinationTargetCoreLayer = new ScatterplotLayer({
+      id: 'destination-target-core-layer',
+      data: selectedDestinations,
+      pickable: false,
+      opacity: 1,
+      stroked: true,
+      filled: true,
+      radiusMinPixels: 4.5,
+      radiusMaxPixels: 8,
+      lineWidthMinPixels: 2,
+      getPosition: (d: DestinationInfo) => [d.position.lon, d.position.lat],
+      getFillColor: [255, 255, 255, 255],
+      getLineColor: [245, 158, 11, 255],
+      updateTriggers: {
+        getPosition: [selectedDestinations.map((d) => `${d.position.lon},${d.position.lat}`).join(',')],
+      },
+    });
+
+    // 6f. Destination Floating HUD Callout Tag
+    const destinationTagLayer = new TextLayer({
+      id: 'destination-tag-layer',
+      data: selectedDestinations,
+      getPosition: (d: DestinationInfo) => [d.position.lon, d.position.lat],
+      getText: (d: DestinationInfo) => `🎯 ${d.label} • ${d.distanceKm.toFixed(1)} km`,
+      getSize: 11,
+      getColor: [254, 240, 138, 255],
+      getTextAnchor: 'middle',
+      getAlignmentBaseline: 'bottom',
+      getPixelOffset: [0, -20],
+      backgroundColor: [15, 23, 42, 240],
+      backgroundPadding: [6, 3, 6, 3],
+      fontFamily: 'monospace',
+      fontWeight: 'bold',
+      characterSet: 'auto',
+      updateTriggers: {
+        getText: [selectedDestinations.map((d) => `${d.label}:${d.distanceKm.toFixed(1)}`).join(',')],
+        getPosition: [selectedDestinations.map((d) => `${d.position.lat},${d.position.lon}`).join(',')],
+      },
     });
 
     // 7a. Vehicle Beacon Outer Status Halo (Double-ring Navigation Transponder)
@@ -617,6 +986,9 @@ export function MapView({
     return [
       heatmapLayer,
       routeLayer,
+      destinationHaloLayer,
+      destinationRemainingPathLayer,
+      destinationBearingVectorLayer,
       trailGlowLayer,
       trailCoreLayer,
       incidentLayer,
@@ -624,6 +996,9 @@ export function MapView({
       warehouseHaloLayer,
       warehouseCoreLayer,
       depotLabelLayer,
+      destinationTargetBeaconLayer,
+      destinationTargetCoreLayer,
+      destinationTagLayer,
       vehicleBeaconLayer,
       vehicleCoreLayer,
       selectedVehicleLabelLayer,
@@ -639,9 +1014,10 @@ export function MapView({
     showHeatmap,
     showOrders,
     onVehicleClick,
+    selectedVehicle,
+    selectedDestinations,
+    focusDestinationOnly,
   ]);
-
-  const selectedVehicle = selectedVehicleId ? vehicles.find((v) => v.id === selectedVehicleId) : null;
 
   return (
     <div className="map-container relative flex-1 h-full w-full">
@@ -679,6 +1055,17 @@ export function MapView({
           <span className={`font-bold ${FLEET_STATUS_PALETTE[selectedVehicle.status]?.hex || 'text-cyan-400'}`}>
             {selectedVehicle.status.replace(/_/g, ' ').toUpperCase()}
           </span>
+          <button
+            onClick={() => setFocusDestinationOnly((prev) => !prev)}
+            className={`px-2 py-0.5 rounded-full text-[10px] font-bold cursor-pointer transition-all border ${
+              focusDestinationOnly
+                ? 'bg-amber-500/25 text-amber-200 border-amber-400/80'
+                : 'bg-slate-900 text-slate-400 border-slate-700 hover:text-white'
+            }`}
+            title="Toggle focus view: show only this vehicle destination or all orders"
+          >
+            {focusDestinationOnly ? 'ONLY DESTINATIONS ✓' : 'SHOW ALL ORDERS'}
+          </button>
           {onToggleChaseMode && (
             <button
               onClick={onToggleChaseMode}
@@ -688,6 +1075,51 @@ export function MapView({
               <span>✕</span> EXIT 3D (ESC)
             </button>
           )}
+        </div>
+      )}
+
+      {/* Vehicle Destination Focus View HUD Banner (When in standard 2D view) */}
+      {!chaseMode && selectedVehicle && (
+        <div className="absolute top-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2.5 bg-slate-950/95 backdrop-blur-md px-4 py-2 rounded-full border border-amber-500/70 shadow-[0_0_25px_rgba(245,158,11,0.35)] text-xs font-mono select-none animate-in fade-in zoom-in-95 duration-150">
+          <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+          <span className="font-bold text-amber-300">
+            🎯 FOCUS: {selectedVehicle.name} ({selectedVehicle.id})
+          </span>
+          <span className="text-slate-600">|</span>
+          <span className="text-slate-300">
+            {selectedDestinations.length > 0
+              ? `${selectedDestinations.length} Target Stop${selectedDestinations.length > 1 ? 's' : ''}`
+              : selectedVehicle.status === 'returning'
+              ? 'Returning to Depot'
+              : 'En Route'}
+          </span>
+          <button
+            onClick={() => setFocusDestinationOnly((prev) => !prev)}
+            className={`ml-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold cursor-pointer transition-all border ${
+              focusDestinationOnly
+                ? 'bg-amber-500/25 text-amber-200 border-amber-400/80 shadow-[0_0_10px_rgba(245,158,11,0.3)]'
+                : 'bg-slate-900 text-slate-400 border-slate-700 hover:text-white'
+            }`}
+            title="Toggle between showing only this vehicle's destinations or all map drop points"
+          >
+            {focusDestinationOnly ? 'ONLY DESTINATIONS ✓' : 'SHOW ALL ORDERS'}
+          </button>
+          {onToggleChaseMode && (
+            <button
+              onClick={onToggleChaseMode}
+              className="px-2.5 py-0.5 rounded-full bg-slate-900 text-cyan-400 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500/50 text-[10px] font-bold cursor-pointer transition-colors"
+              title="Engage 3D Chase Camera"
+            >
+              🎥 3D VIEW
+            </button>
+          )}
+          <button
+            onClick={() => onVehicleClick('')}
+            className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-800 text-slate-400 hover:text-rose-300 hover:bg-slate-700 text-[11px] cursor-pointer"
+            title="Exit Focus View (Esc)"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -855,6 +1287,14 @@ export function MapView({
                 <div className="flex items-center gap-2">
                   <span className="w-3 h-0.5 bg-cyan-400 shrink-0"></span>
                   <span>Selected Vehicle Planned Route Corridor</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-0.5 bg-amber-400 shrink-0 shadow-[0_0_8px_rgba(251,191,36,0.8)]"></span>
+                  <span className="text-amber-200 font-bold">Forward Route to Destination (Gold Line)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-amber-300/80 shrink-0"></span>
+                  <span className="text-amber-200 font-bold">Target Drop Bullseye (Focus Mode)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-amber-500 to-rose-500 shrink-0"></span>
