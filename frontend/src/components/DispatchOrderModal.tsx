@@ -121,7 +121,12 @@ export function DispatchOrderModal({
       })
       .then((data: DeliveryCorridorPreset[]) => {
         if (Array.isArray(data) && data.length > 0) {
-          setPresets(data);
+          const sanitized = data.map((p) => ({
+            ...p,
+            tags: Array.isArray(p.tags) ? p.tags : ['Phnom Penh Corridor'],
+            defaultSlaMin: p.defaultSlaMin || (p.suggestedPriority === 'urgent' ? 15 : p.suggestedPriority === 'express' ? 35 : 120),
+          }));
+          setPresets(sanitized);
         }
       })
       .catch(() => {
@@ -133,7 +138,8 @@ export function DispatchOrderModal({
   const handleSelectPreset = (preset: DeliveryCorridorPreset) => {
     setSelectedPresetId(preset.id);
     setPriority(preset.suggestedPriority);
-    setSlaDurationMin(preset.defaultSlaMin);
+    const sla = preset.defaultSlaMin || (preset.suggestedPriority === 'urgent' ? 15 : preset.suggestedPriority === 'express' ? 35 : 120);
+    setSlaDurationMin(sla);
     setDispatchResult(null);
     setError(null);
   };
@@ -376,10 +382,10 @@ export function DispatchOrderModal({
                       <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400">
                         <span className="flex items-center gap-1 text-slate-300">
                           <Clock className="w-3 h-3 text-cyan-400" />
-                          SLA {preset.defaultSlaMin} min
+                          SLA {preset.defaultSlaMin || (preset.suggestedPriority === 'urgent' ? 15 : preset.suggestedPriority === 'express' ? 35 : 120)} min
                         </span>
                         <div className="flex items-center gap-1">
-                          {preset.tags.slice(0, 1).map((t) => (
+                          {(preset.tags || []).slice(0, 1).map((t) => (
                             <span key={t} className="px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400">
                               {t}
                             </span>
