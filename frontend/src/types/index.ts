@@ -201,3 +201,53 @@ export interface ImpactAnalysisResult {
   traversalTimeMs: number;
   cypherQuery: string;
 }
+
+export interface HiveProvinceRevenue {
+  province: string;
+  revenue: number;
+  share: string;
+}
+
+export interface HiveTopCustomer {
+  rank: number;
+  name: string;
+  city: string;
+  spend: number;
+  tier: string;
+}
+
+export interface HiveWarehouseAnalytics {
+  success: boolean;
+  warehouseEngine: string;
+  storageLayer: string;
+  stagingDir: string;
+  format: string;
+  metrics: {
+    totalMonthlyOrders: number;
+    activeCustomers: number;
+    customerBuckets: number;
+    septemberRevenue: number;
+    queryLatencyMs: number;
+    csvLatencyMs: number;
+    speedupMultiplier: number;
+    compressionRatio: number;
+  };
+  revenueByProvince: HiveProvinceRevenue[];
+  topCustomers: HiveTopCustomer[];
+  orderTiers: {
+    highTier: { label: string; count: number; percentage: string };
+    normalTier: { label: string; count: number; percentage: string };
+  };
+  pipelineStages: Array<{ stage: number; name: string; desc: string }>;
+}
+
+export interface HiveQueryResult {
+  success: boolean;
+  queryId: string;
+  executionEngine: string;
+  status: string;
+  latencyMs: number;
+  recordsScanned: number;
+  partitionsPruned: number;
+  error?: string;
+}

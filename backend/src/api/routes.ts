@@ -209,6 +209,24 @@ export function setupRoutes(engine: SimulationEngine): Router {
     });
   });
 
+  // Apache Hive 3.1 Big Data OLAP Warehouse Analytics (Cold Path)
+  router.get('/integrations/ecommerce/warehouse', async (req, res) => {
+    const analytics = await engine.ecommerceClient.fetchWarehouseAnalytics();
+    if (!analytics) {
+      res.status(503).json({
+        error: 'Warehouse analytics unavailable from ecommerce-hive-nosql on port 4000',
+      });
+      return;
+    }
+    res.json(analytics);
+  });
+
+  router.get('/integrations/ecommerce/warehouse/query/:queryId', async (req, res) => {
+    const { queryId } = req.params;
+    const result = await engine.ecommerceClient.executeHiveQuery(queryId);
+    res.json(result);
+  });
+
   // Phase 3 Persistence Layer & Inventory Inspection Endpoints
   router.get('/persistence/status', (req, res) => {
     res.json(engine.persistence.getStatus());

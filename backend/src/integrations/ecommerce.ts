@@ -53,6 +53,56 @@ export interface EcommerceBridgeStatus {
   catalogItemsCount: number;
 }
 
+export interface HiveProvinceRevenue {
+  province: string;
+  revenue: number;
+  share: string;
+}
+
+export interface HiveTopCustomer {
+  rank: number;
+  name: string;
+  city: string;
+  spend: number;
+  tier: string;
+}
+
+export interface HiveWarehouseAnalytics {
+  success: boolean;
+  warehouseEngine: string;
+  storageLayer: string;
+  stagingDir: string;
+  format: string;
+  metrics: {
+    totalMonthlyOrders: number;
+    activeCustomers: number;
+    customerBuckets: number;
+    septemberRevenue: number;
+    queryLatencyMs: number;
+    csvLatencyMs: number;
+    speedupMultiplier: number;
+    compressionRatio: number;
+  };
+  revenueByProvince: HiveProvinceRevenue[];
+  topCustomers: HiveTopCustomer[];
+  orderTiers: {
+    highTier: { label: string; count: number; percentage: string };
+    normalTier: { label: string; count: number; percentage: string };
+  };
+  pipelineStages: Array<{ stage: number; name: string; desc: string }>;
+}
+
+export interface HiveQueryResult {
+  success: boolean;
+  queryId: string;
+  executionEngine: string;
+  status: string;
+  latencyMs: number;
+  recordsScanned: number;
+  partitionsPruned: number;
+  error?: string;
+}
+
 export const FALLBACK_CAMBODIA_CATALOG: EcommerceProduct[] = [
   { product_id: 'P0874', name: 'Battambang Jasmine Fragrant Rice 5kg', category: 'Food & Groceries', price: 4.8, stock: 250, weight_kg: 5.0 },
   { product_id: 'P0875', name: 'Kampot Organic Black Pepper 250g', category: 'Food & Groceries', price: 7.5, stock: 140, weight_kg: 0.25 },
@@ -305,6 +355,60 @@ export class EcommerceClient {
 
   public recordOrderIngested(): void {
     this.ingestedOrdersCount++;
+  }
+
+  /**
+   * Fetch big-data OLAP warehouse analytics from Apache Hive reporting service.
+   */
+  public async fetchWarehouseAnalytics(): Promise<HiveWarehouseAnalytics | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/analytics`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        this.isAvailable = true;
+        return (await res.json()) as HiveWarehouseAnalytics;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Dispatch a HiveQL benchmark query (D1-D5) to the vectorized Tez execution engine.
+   */
+  public async executeHiveQuery(queryId: string): Promise<HiveQueryResult> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/analytics/query/${encodeURIComponent(queryId)}`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        this.isAvailable = true;
+        return (await res.json()) as HiveQueryResult;
+      }
+      return {
+        success: false,
+        queryId,
+        executionEngine: 'Apache Hive 3.1.3 (Tez Vectorized Engine)',
+        status: 'FAILED',
+        latencyMs: 0,
+        recordsScanned: 0,
+        partitionsPruned: 0,
+        error: `Server responded with status ${res.status}`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        queryId,
+        executionEngine: 'Apache Hive 3.1.3 (Tez Vectorized Engine)',
+        status: 'OFFLINE',
+        latencyMs: 0,
+        recordsScanned: 0,
+        partitionsPruned: 0,
+        error: err.message,
+      };
+    }
   }
 
   public getStatus(): EcommerceBridgeStatus {

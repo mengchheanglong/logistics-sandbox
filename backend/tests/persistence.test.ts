@@ -202,5 +202,17 @@ describe('Phase 3: Persistence Layer & Polyglot NoSQL Adapters', () => {
 
       expect(updatedStock).toBe(initialStock - 5);
     });
+
+    it('handles offline fallback gracefully when warehouse is queried', async () => {
+      // Connect to non-existent port to test resilient fallback
+      const offlineClient = new EcommerceClient('http://localhost:9999');
+      const analytics = await offlineClient.fetchWarehouseAnalytics();
+      expect(analytics).toBeNull();
+
+      const queryResult = await offlineClient.executeHiveQuery('D1');
+      expect(queryResult.success).toBe(false);
+      expect(queryResult.status).toBe('OFFLINE');
+    });
   });
 });
+
