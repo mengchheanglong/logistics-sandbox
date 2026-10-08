@@ -165,7 +165,8 @@ export function setupRoutes(engine: SimulationEngine): Router {
   });
 
   // Upstream ecommerce-hive-nosql integration endpoints
-  router.get('/integrations/ecommerce/status', (req, res) => {
+  router.get('/integrations/ecommerce/status', async (req, res) => {
+    await engine.ecommerceClient.checkHealth();
     res.json(engine.ecommerceClient.getStatus());
   });
 

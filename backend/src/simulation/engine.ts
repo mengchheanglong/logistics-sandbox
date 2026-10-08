@@ -192,6 +192,16 @@ export class SimulationEngine {
     // Seed initial orders so vehicles immediately start active delivery on launch
     this.seedInitialOrders(20);
 
+    // Initial check for upstream ecommerce marketplace
+    this.ecommerceClient.checkHealth().then((ok) => {
+      if (ok) {
+        console.log('[SimulationEngine] Upstream ecommerce-hive-nosql connected on port 4000 ✓');
+        this.ecommerceClient.fetchCatalog().then((cat) => {
+          if (cat && cat.length > 0) this.world.setCatalog(cat);
+        });
+      }
+    });
+
     console.log(
       `[SimulationEngine] Created simulation ${this.simulationId}`,
       `| ${defaultScenario.vehicleCount} vehicles`,
@@ -1634,7 +1644,7 @@ export class SimulationEngine {
     slaDurationMin?: number;
     items?: OrderItem[];
     totalWeight_kg?: number;
-  }): Promise<{ success: boolean; order?: Order; assignedVehicleId?: string | null; message: string }> {
+  }): Promise<{ success: boolean; order?: Order; assignedVehicleId?: string | null; message: string; ecommerceSynced?: boolean }> {
     const simTime = this.clock.getSimulatedTime();
     let pickupLocation = options.pickupLocation;
     let deliveryLocation = options.deliveryLocation;
@@ -1702,6 +1712,47 @@ export class SimulationEngine {
     // Run an immediate dispatch pass
     await this.dispatchPendingOrders();
 
+    // Push order into upstream ecommerce-hive-nosql marketplace (MongoDB)
+    let ecommerceSynced = false;
+    try {
+      const isUp = await this.ecommerceClient.checkHealth();
+      if (isUp) {
+        const preset = options.presetId
+          ? DELIVERY_CORRIDOR_PRESETS.find(p => p.id === options.presetId)
+          : null;
+
+        const customer = this.world.getCustomer(order.customerId);
+        const marketplaceItems = (order.items || []).map(i => ({
+          product_id: i.product_id || 'P5004',
+          name: i.name || 'Traditional Khmer Herbal Inhaler & Refreshing Balm Duo',
+          quantity: i.quantity || 1,
+          price: i.price || 5.5,
+          weight_kg: i.weight_kg || 0.1,
+        }));
+
+        const totalAmount = marketplaceItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+
+        const pushSuccess = await this.ecommerceClient.createMarketplaceOrder({
+          order_id: order.id,
+          customer_id: order.customerId,
+          customer_name: customer?.name || customerName || 'Express Customer',
+          items: marketplaceItems,
+          total: totalAmount > 0 ? totalAmount : 25.0,
+          province: 'Phnom Penh',
+          delivery_address: preset ? preset.delivery.name : 'Phnom Penh Urban Route',
+          status: 'Pending',
+        });
+
+        if (pushSuccess) {
+          ecommerceSynced = true;
+          this.ecommerceClient.recordOrderIngested();
+          console.log(`[SimulationEngine] Injected order ${order.id} mirrored to upstream ecommerce marketplace (Port 4000) ✓`);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[SimulationEngine] Ecommerce marketplace sync skipped: ${err?.message}`);
+    }
+
     const assignedVehicle = order.assignedVehicleId ? this.world.getVehicle(order.assignedVehicleId) : null;
     const msg = assignedVehicle
       ? `Order ${order.id} (${(order.priority || 'standard').toUpperCase()}) dispatched to ${assignedVehicle.name} (${assignedVehicle.driverName})!`
@@ -1712,6 +1763,7 @@ export class SimulationEngine {
       order,
       assignedVehicleId: order.assignedVehicleId,
       message: msg,
+      ecommerceSynced,
     };
   }
 }

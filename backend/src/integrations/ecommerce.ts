@@ -139,9 +139,9 @@ export class EcommerceClient {
    */
   public async checkHealth(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/orders`, {
+      const res = await fetch(`${this.baseUrl}/api/products/meta/counts`, {
         method: 'GET',
-        signal: AbortSignal.timeout(1500),
+        signal: AbortSignal.timeout(2000),
       });
       this.isAvailable = res.ok;
       this.lastCheckTime = Date.now();
