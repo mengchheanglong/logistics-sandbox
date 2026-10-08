@@ -236,6 +236,76 @@ export class World {
     return order;
   }
 
+  /**
+   * Create an explicit custom or preset order injected by an operator.
+   */
+  public createCustomOrder(options: {
+    pickupLocation: Coordinate;
+    deliveryLocation: Coordinate;
+    customerName?: string;
+    priority?: OrderPriority;
+    slaDurationMin?: number;
+    items?: OrderItem[];
+    totalWeight_kg?: number;
+    simTimestamp: number;
+  }): Order {
+    this.orderCounter++;
+    this.customerCounter++;
+
+    const customerId = `CUST-${String(this.customerCounter).padStart(4, '0')}`;
+    const orderId = `ORD-${String(this.orderCounter).padStart(5, '0')}`;
+
+    const customerName = options.customerName || `Express Customer ${this.customerCounter}`;
+    this.customers.set(customerId, {
+      id: customerId,
+      name: customerName,
+      address: `${options.deliveryLocation.lat.toFixed(4)}, ${options.deliveryLocation.lon.toFixed(4)}`,
+      position: options.deliveryLocation,
+    });
+
+    const priority: OrderPriority = options.priority || 'express';
+    const defaultSlaMin = priority === 'urgent' ? 15 : priority === 'express' ? 35 : 120;
+    const slaDurationMin = options.slaDurationMin || defaultSlaMin;
+    const slaDeadline = options.simTimestamp + slaDurationMin * 60 * 1000;
+
+    const items: OrderItem[] = options.items && options.items.length > 0
+      ? options.items
+      : [
+          {
+            name: 'Express Package Delivery',
+            quantity: 1,
+            price: 25.0,
+            category: 'Express Parcels',
+            weight_kg: options.totalWeight_kg || 2.5,
+          },
+        ];
+
+    const totalWeight_kg = options.totalWeight_kg || items.reduce((sum, item) => sum + (item.weight_kg || 1) * item.quantity, 0);
+
+    const order: Order = {
+      id: orderId,
+      customerId,
+      status: 'pending',
+      priority,
+      slaDeadline,
+      slaDurationMin,
+      slaStatus: 'on_time',
+      items,
+      totalWeight_kg: Math.max(0.5, Math.round(totalWeight_kg * 10) / 10),
+      pickupLocation: options.pickupLocation,
+      deliveryLocation: options.deliveryLocation,
+      assignedVehicleId: null,
+      createdAt: options.simTimestamp,
+      assignedAt: null,
+      pickedUpAt: null,
+      deliveredAt: null,
+      estimatedDeliveryTime: null,
+    };
+
+    this.orders.set(orderId, order);
+    return order;
+  }
+
   public setCatalog(catalog: EcommerceProduct[]): void {
     if (catalog && catalog.length > 0) {
       this.catalog = catalog;

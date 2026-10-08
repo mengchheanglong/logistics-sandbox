@@ -16,6 +16,7 @@ import {
   Network,
   AlertTriangle,
   BarChart3,
+  Send,
 } from 'lucide-react';
 import type { SpeedSetting, EcommerceBridgeStatus, AlgorithmBenchmarkStats } from '../types';
 
@@ -46,6 +47,7 @@ interface ControlBarProps {
   onOpenIncidents?: () => void;
   onOpenBenchmark?: () => void;
   onOpenGraph?: () => void;
+  onOpenDispatchOrder?: () => void;
 }
 
 const SPEEDS: { label: string; value: SpeedSetting }[] = [
@@ -82,6 +84,7 @@ export function ControlBar({
   onOpenIncidents,
   onOpenBenchmark,
   onOpenGraph,
+  onOpenDispatchOrder,
 }: ControlBarProps) {
   const defaultPresets = [
     { id: 'morning_delivery', name: 'Morning Delivery' },
@@ -290,6 +293,17 @@ export function ControlBar({
         )}
 
         <div className="h-4 w-px bg-slate-800 shrink-0" />
+
+        {onOpenDispatchOrder && (
+          <button
+            onClick={onOpenDispatchOrder}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 hover:bg-cyan-500/30 hover:border-cyan-400 whitespace-nowrap transition-all cursor-pointer shadow-[0_0_12px_rgba(6,182,212,0.25)] active:scale-95"
+            title="Dispatch Express Order (Phnom Penh Corridors)"
+          >
+            <Send className="w-3.5 h-3.5 text-cyan-400" />
+            <span>+ Dispatch</span>
+          </button>
+        )}
 
         {onOpenBenchmark && (
           <button

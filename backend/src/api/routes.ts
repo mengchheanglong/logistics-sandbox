@@ -71,6 +71,19 @@ export function setupRoutes(engine: SimulationEngine): Router {
     res.json(engine.world.getAllOrders());
   });
 
+  router.get('/orders/presets', (req, res) => {
+    res.json(engine.getDeliveryPresets());
+  });
+
+  router.post('/orders/inject', async (req, res) => {
+    try {
+      const result = await engine.injectCustomOrder(req.body || {});
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err?.message || 'Failed to inject order' });
+    }
+  });
+
   router.get('/orders/:id', (req, res) => {
     const o = engine.world.getOrder(req.params.id);
     if (o) res.json(o);
@@ -154,16 +167,6 @@ export function setupRoutes(engine: SimulationEngine): Router {
   // Upstream ecommerce-hive-nosql integration endpoints
   router.get('/integrations/ecommerce/status', (req, res) => {
     res.json(engine.ecommerceClient.getStatus());
-  });
-
-  router.post('/integrations/ecommerce/order', (req, res) => {
-    const eOrder = req.body;
-    if (!eOrder || !eOrder.order_id) {
-      res.status(400).json({ error: 'order_id is required' });
-      return;
-    }
-    const order = engine.ingestEcommerceOrder(eOrder);
-    res.json({ status: 'order_ingested', order });
   });
 
   router.post('/integrations/ecommerce/sync', async (req, res) => {

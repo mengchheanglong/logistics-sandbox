@@ -72,4 +72,41 @@ describe('VRPTW, SLA Tracking & Scenario Presets', () => {
     expect(state.stats.slaComplianceRate).toBe(100);
     expect(state.stats.atRiskOrdersCount).toBe(0);
   });
+
+  it('provides Phnom Penh delivery corridor presets and injects custom orders', async () => {
+    const engine = new SimulationEngine();
+    const presets = engine.getDeliveryPresets();
+
+    expect(presets.length).toBe(6);
+    expect(presets[0].id).toBe('pp-depot-a-to-st271');
+    expect(presets[1].id).toBe('pp-depot-a-to-bkk1');
+    expect(presets[2].id).toBe('pp-depot-b-to-tuolkork');
+    expect(presets[3].id).toBe('pp-hub-to-riverside');
+    expect(presets[4].id).toBe('pp-depot-a-to-sensok');
+    expect(presets[5].id).toBe('pp-depot-b-to-norodom');
+
+    // Verify coordinates match actual Phnom Penh geography
+    expect(presets[0].pickup.position.lat).toBeCloseTo(11.5680, 2);
+    expect(presets[0].delivery.position.lat).toBeCloseTo(11.5305, 2);
+
+    // Inject custom order using preset 0 (Urgent Blitz)
+    const result = await engine.injectCustomOrder({
+      presetId: 'pp-depot-a-to-st271',
+      customerName: 'Sokha Ly',
+      priority: 'urgent',
+      slaDurationMin: 15,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.order).toBeDefined();
+    expect(result.order?.priority).toBe('urgent');
+    expect(result.order?.slaDurationMin).toBe(15);
+    expect(result.order?.customerId).toBeDefined();
+
+    // Verify order is recorded in the world model
+    const worldOrder = engine.world.getOrder(result.order!.id);
+    expect(worldOrder).toBeDefined();
+    expect(worldOrder?.id).toBe(result.order!.id);
+  });
 });
+

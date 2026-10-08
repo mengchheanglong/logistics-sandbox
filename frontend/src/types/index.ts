@@ -251,3 +251,21 @@ export interface HiveQueryResult {
   partitionsPruned: number;
   error?: string;
 }
+
+export interface DeliveryCorridorPreset {
+  id: string;
+  name: string;
+  description: string;
+  pickup: {
+    name: string;
+    position: Coordinate;
+  };
+  delivery: {
+    name: string;
+    position: Coordinate;
+  };
+  suggestedPriority: OrderPriority;
+  defaultSlaMin: number;
+  tags: string[];
+}
+

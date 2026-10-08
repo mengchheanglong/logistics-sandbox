@@ -6,6 +6,7 @@ import { VehiclePanel } from './components/VehiclePanel';
 import { IncidentPanel } from './components/IncidentPanel';
 import { BenchmarkModal } from './components/BenchmarkModal';
 import { GraphIntelligenceModal } from './components/GraphIntelligenceModal';
+import { DispatchOrderModal } from './components/DispatchOrderModal';
 import { AnalyticsDrawer, AnalyticsTelemetryPoint } from './components/AnalyticsDrawer';
 import { NotificationToast, NotificationItem } from './components/NotificationToast';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -38,6 +39,7 @@ function ControlRoom() {
 
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [chaseMode, setChaseMode] = useState<boolean>(false);
+  const [dispatchModalOpen, setDispatchModalOpen] = useState<boolean>(false);
   const [incidentModalOpen, setIncidentModalOpen] = useState<boolean>(false);
   const [benchmarkModalOpen, setBenchmarkModalOpen] = useState<boolean>(false);
   const [graphModalOpen, setGraphModalOpen] = useState<boolean>(false);
@@ -216,6 +218,8 @@ function ControlRoom() {
           setSelectedVehicleId(null);
           setIncidentModalOpen(false);
           setBenchmarkModalOpen(false);
+          setGraphModalOpen(false);
+          setDispatchModalOpen(false);
         }
       }
     };
@@ -318,6 +322,7 @@ function ControlRoom() {
         onOpenIncidents={() => setIncidentModalOpen(true)}
         onOpenBenchmark={() => setBenchmarkModalOpen(true)}
         onOpenGraph={() => setGraphModalOpen(true)}
+        onOpenDispatchOrder={() => setDispatchModalOpen(true)}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -389,6 +394,15 @@ function ControlRoom() {
         onClose={() => setGraphModalOpen(false)}
         warehouses={warehouses}
         vehicles={vehicles}
+      />
+
+      <DispatchOrderModal
+        isOpen={dispatchModalOpen}
+        onClose={() => setDispatchModalOpen(false)}
+        onTrackVehicle={(vehicleId) => {
+          setSelectedVehicleId(vehicleId);
+          setChaseMode(true);
+        }}
       />
 
       <NotificationToast

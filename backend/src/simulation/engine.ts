@@ -29,6 +29,8 @@ import {
   SimulationEvent,
   Vehicle,
   Order,
+  OrderPriority,
+  OrderItem,
   RoutingAlgorithm,
   DispatchStrategy,
   AlgorithmBenchmarkStats,
@@ -42,6 +44,66 @@ import {
   calculateAvoidanceWaypoint,
 } from '../utils/geo.js';
 import { v4 as uuidv4 } from 'uuid';
+
+export interface DeliveryCorridorPreset {
+  id: string;
+  name: string;
+  description: string;
+  pickup: { name: string; position: Coordinate };
+  delivery: { name: string; position: Coordinate };
+  suggestedPriority: OrderPriority;
+}
+
+export const DELIVERY_CORRIDOR_PRESETS: DeliveryCorridorPreset[] = [
+  {
+    id: 'pp-depot-a-to-st271',
+    name: 'Depot A → St 271 (Meanchey)',
+    description: 'Central Market Depot A to St 271 south artery (Boeung Tumpun) • ~6.8 km',
+    pickup: { name: 'Central Market Depot A', position: { lat: 11.5680, lon: 104.9223 } },
+    delivery: { name: 'St 271 (Boeung Tumpun)', position: { lat: 11.5305, lon: 104.9085 } },
+    suggestedPriority: 'express',
+  },
+  {
+    id: 'pp-depot-a-to-bkk1',
+    name: 'Depot A → BKK1 (Pasteur)',
+    description: 'Central Market Depot A to Pasteur / St 51 in BKK1 residential zone • ~2.1 km',
+    pickup: { name: 'Central Market Depot A', position: { lat: 11.5680, lon: 104.9223 } },
+    delivery: { name: 'BKK1 / Pasteur (St 51)', position: { lat: 11.5528, lon: 104.9282 } },
+    suggestedPriority: 'urgent',
+  },
+  {
+    id: 'pp-depot-b-to-tuolkork',
+    name: 'Depot B → Tuol Kork (TK Ave)',
+    description: 'Russian Market Depot B to Tuol Kork commercial center (St 289) • ~5.2 km',
+    pickup: { name: 'Russian Market Depot B', position: { lat: 11.5435, lon: 104.9142 } },
+    delivery: { name: 'Tuol Kork (TK Ave St 289)', position: { lat: 11.5732, lon: 104.8984 } },
+    suggestedPriority: 'express',
+  },
+  {
+    id: 'pp-hub-to-riverside',
+    name: 'Central Hub → Riverside Quay',
+    description: 'Bak Touk Central Hub to Sisowath Quay riverfront promenade • ~2.4 km',
+    pickup: { name: 'Bak Touk Central Hub', position: { lat: 11.5621, lon: 104.9160 } },
+    delivery: { name: 'Riverside (Sisowath Quay)', position: { lat: 11.5695, lon: 104.9312 } },
+    suggestedPriority: 'urgent',
+  },
+  {
+    id: 'pp-depot-a-to-sensok',
+    name: 'Depot A → Sen Sok (AEON 2)',
+    description: 'Central Market Depot A along Russian Blvd to AEON Mall 2 in Sen Sok • ~6.4 km',
+    pickup: { name: 'Central Market Depot A', position: { lat: 11.5680, lon: 104.9223 } },
+    delivery: { name: 'Sen Sok (AEON Mall 2)', position: { lat: 11.5850, lon: 104.8820 } },
+    suggestedPriority: 'standard',
+  },
+  {
+    id: 'pp-depot-b-to-norodom',
+    name: 'Depot B → Independence Monument',
+    description: 'Russian Market Depot B north along Mao Tse Toung to Norodom Blvd • ~2.3 km',
+    pickup: { name: 'Russian Market Depot B', position: { lat: 11.5435, lon: 104.9142 } },
+    delivery: { name: 'Independence Monument / Norodom', position: { lat: 11.5564, lon: 104.9282 } },
+    suggestedPriority: 'express',
+  },
+];
 
 export class SimulationEngine {
   public clock: SimulationClock;
@@ -1525,9 +1587,117 @@ export class SimulationEngine {
         return { success: true, message: 'Fleet-wide in-flight re-route triggered.' };
       }
 
+      case 'inject_order': {
+        const payload = (event.payload || {}) as any;
+        this.injectCustomOrder(payload).then((res) => {
+          this.emitEvent('order', res.order?.id || 'manual', 'order.injected', res);
+        }).catch(console.error);
+        return { success: true, message: 'Express delivery order injected.' };
+      }
+
       default:
         console.log(`[SimulationEngine] Unknown injection event type: ${event.type}`);
         return { success: false, message: `Unknown event type: ${event.type}` };
     }
+  }
+
+  /**
+   * Get available delivery corridor presets for operator injection.
+   */
+  public getDeliveryPresets(): DeliveryCorridorPreset[] {
+    return DELIVERY_CORRIDOR_PRESETS;
+  }
+
+  /**
+   * Inject a custom or preset order into the simulation and immediately dispatch.
+   */
+  public async injectCustomOrder(options: {
+    presetId?: string;
+    pickupLocation?: Coordinate;
+    deliveryLocation?: Coordinate;
+    customerName?: string;
+    priority?: OrderPriority;
+    slaDurationMin?: number;
+    items?: OrderItem[];
+    totalWeight_kg?: number;
+  }): Promise<{ success: boolean; order?: Order; assignedVehicleId?: string | null; message: string }> {
+    const simTime = this.clock.getSimulatedTime();
+    let pickupLocation = options.pickupLocation;
+    let deliveryLocation = options.deliveryLocation;
+    let customerName = options.customerName;
+    let priority = options.priority;
+
+    if (options.presetId) {
+      const preset = DELIVERY_CORRIDOR_PRESETS.find(p => p.id === options.presetId);
+      if (preset) {
+        pickupLocation = pickupLocation || preset.pickup.position;
+        deliveryLocation = deliveryLocation || preset.delivery.position;
+        customerName = customerName || `${preset.name} Customer`;
+        priority = priority || preset.suggestedPriority;
+      }
+    }
+
+    if (!pickupLocation) {
+      const defaultDepot = this.world.getAllWarehouses()[0];
+      pickupLocation = defaultDepot?.position || { lat: 11.5680, lon: 104.9223 };
+    }
+
+    if (!deliveryLocation) {
+      deliveryLocation = { lat: 11.5528, lon: 104.9282 }; // BKK1 fallback
+    }
+
+    const order = this.world.createCustomOrder({
+      pickupLocation,
+      deliveryLocation,
+      customerName,
+      priority: priority || 'express',
+      slaDurationMin: options.slaDurationMin,
+      items: options.items,
+      totalWeight_kg: options.totalWeight_kg,
+      simTimestamp: simTime,
+    });
+
+    this.ordersGenerated++;
+
+    // Urgent and Express orders jump to front of queue
+    if (order.priority === 'urgent' || order.priority === 'express') {
+      this.dispatchQueue.unshift(order.id);
+    } else {
+      this.dispatchQueue.push(order.id);
+    }
+
+    this.sortDispatchQueueByEDF();
+
+    // Persist
+    this.persistence.orders.saveOrder(order).catch(() => {});
+
+    // Emit domain event
+    this.emitEvent('order', order.id, 'order.created', {
+      orderId: order.id,
+      customerId: order.customerId,
+      customerName: this.world.getCustomer(order.customerId)?.name,
+      pickupLocation: order.pickupLocation,
+      deliveryLocation: order.deliveryLocation,
+      priority: order.priority,
+      slaDeadline: order.slaDeadline,
+      slaDurationMin: order.slaDurationMin,
+      itemsCount: order.items.length,
+      source: 'operator_injection',
+    });
+
+    // Run an immediate dispatch pass
+    await this.dispatchPendingOrders();
+
+    const assignedVehicle = order.assignedVehicleId ? this.world.getVehicle(order.assignedVehicleId) : null;
+    const msg = assignedVehicle
+      ? `Order ${order.id} (${(order.priority || 'standard').toUpperCase()}) dispatched to ${assignedVehicle.name} (${assignedVehicle.driverName})!`
+      : `Order ${order.id} (${(order.priority || 'standard').toUpperCase()}) queued for next available courier.`;
+
+    return {
+      success: true,
+      order,
+      assignedVehicleId: order.assignedVehicleId,
+      message: msg,
+    };
   }
 }
