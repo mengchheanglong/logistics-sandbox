@@ -102,11 +102,11 @@ export function StatsBar({ stats, ecommerceBridge }: StatsBarProps) {
           <div className="flex items-center gap-3.5 shrink-0">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
               <span className={`w-1.5 h-1.5 rounded-full ${ecommerceBridge.connected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-              NoSQL Bridge
+              Marketplace Read
             </span>
             <StatGroup
               label="Inventory SKUs"
-              value={`${ecommerceBridge.catalogItemsCount ?? 16} Live`}
+              value={`${ecommerceBridge.catalogItemsCount ?? 16} Catalog`}
               colorClass="text-emerald-400 font-semibold"
             />
             <StatGroup
@@ -115,8 +115,8 @@ export function StatsBar({ stats, ecommerceBridge }: StatsBarProps) {
               colorClass="text-cyan-400 font-semibold"
             />
             <StatGroup
-              label="Cassandra Pings"
-              value={ecommerceBridge.telemetryPingsEmittedCount.toLocaleString()}
+              label="Upstream Writes"
+              value="Disabled"
               colorClass="text-teal-400 font-semibold"
             />
           </div>

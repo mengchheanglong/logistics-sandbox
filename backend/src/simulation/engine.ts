@@ -6,8 +6,8 @@
  * 2. Generate new scenario orders (or ingest from upstream ecommerce-hive-nosql)
  * 3. Dispatch pending orders to idle vehicles
  * 4. Move vehicles along their route geometry
- * 5. Stream telemetry pings back into ecommerce-hive-nosql (Cassandra)
- * 6. Check for delivery completion and update upstream order status
+ * 5. Store simulated telemetry in local persistence
+ * 6. Check for delivery completion and update local order status
  * 7. Emit domain events
  *
  * The engine is the single source of truth for the simulation world.
@@ -21,8 +21,8 @@ import { Dispatcher, AssignmentResult } from '../dispatch/dispatcher.js';
 import { VrpTourSolver } from '../dispatch/vrp.js';
 import { PredictiveAiEngine } from '../dispatch/predictive-ai.js';
 import { ChaosEngine } from './chaos-engine.js';
-import { RoutingClient } from '../routing/client.js';
-import { EcommerceClient, EcommerceOrder } from '../integrations/ecommerce.js';
+import { RoutingClient, StrictRoutingError, GraphProvenance } from '../routing/client.js';
+import { EcommerceReadClient, EcommerceOrder, MarketplaceReadAdapter } from '../integrations/ecommerce.js';
 import { createPersistenceLayer, IPersistenceLayer, TelemetryPing } from '../persistence/index.js';
 import { SCENARIO_PRESETS, defaultScenario } from '../scenarios/presets.js';
 import {
@@ -39,6 +39,7 @@ import {
   RoadIncident,
   ScenarioConfig,
   ChaosMode,
+  PredictiveAiMetrics,
 } from '../world/types.js';
 import {
   interpolateAlongPath,
@@ -46,7 +47,7 @@ import {
   haversineDistance,
   calculateAvoidanceWaypoint,
 } from '../utils/geo.js';
-import { v4 as uuidv4 } from 'uuid';
+import { computeCanonicalEventSequenceHash } from '../events/canonical-hash.js';
 
 export interface DeliveryCorridorPreset {
   id: string;
@@ -129,7 +130,7 @@ export class SimulationEngine {
   public dispatcher: Dispatcher;
   public vrpSolver: VrpTourSolver;
   public routingClient: RoutingClient;
-  public ecommerceClient: EcommerceClient;
+  public ecommerceClient: MarketplaceReadAdapter;
   public persistence: IPersistenceLayer;
   public predictiveAiEngine: PredictiveAiEngine;
   public chaosEngine: ChaosEngine = new ChaosEngine();
@@ -177,16 +178,30 @@ export class SimulationEngine {
 
   /** Cumulative distance driven across all completed vehicle routes (km) */
   private cumulativeDistanceKm: number = 0;
+  private incidentCounter: number = 0;
+  private eventSequenceNumber: number = 0;
+  private strictRouting: boolean = false;
+  private requireRealGraph: boolean = false;
+  private runInvalidated: boolean = false;
+  private invalidationReason?: string;
+  private cachedProvenance?: GraphProvenance;
 
-  constructor() {
-    this.simulationId = uuidv4();
+  constructor(options: { ecommerceReadUrl?: string; strictRouting?: boolean; requireRealGraph?: boolean } = {}) {
+    this.simulationId = `sim-${defaultScenario.id}-${defaultScenario.seed}`;
     this.clock = new SimulationClock();
     this.eventBus = new EventBus();
     this.world = new World(defaultScenario);
     this.dispatcher = new Dispatcher();
     this.vrpSolver = new VrpTourSolver();
     this.routingClient = new RoutingClient();
-    this.ecommerceClient = new EcommerceClient();
+    if (options.strictRouting) {
+      this.strictRouting = true;
+      this.routingClient.setStrictMode(true);
+    }
+    if (options.requireRealGraph) {
+      this.requireRealGraph = true;
+    }
+    this.ecommerceClient = new EcommerceReadClient(options.ecommerceReadUrl ?? process.env.ECOMMERCE_READ_URL);
     this.persistence = createPersistenceLayer();
     this.predictiveAiEngine = new PredictiveAiEngine();
 
@@ -262,7 +277,7 @@ export class SimulationEngine {
       }
     });
 
-    // Synchronize initial topology into Neo4j Relationship Graph
+    // Synchronize the local simulation relationship graph
     this.persistence.relationships.syncTopology(
       this.world.getAllWarehouses(),
       this.world.getAllVehicles(),
@@ -294,6 +309,7 @@ export class SimulationEngine {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+    this.clock.resume();
     this.emitEvent('simulation', this.simulationId, 'simulation.stopped', {});
     console.log('[SimulationEngine] Simulation stopped');
   }
@@ -304,6 +320,7 @@ export class SimulationEngine {
   }
 
   public resume(): void {
+    this.lastTickTime = Date.now();
     this.clock.resume();
     this.emitEvent('simulation', this.simulationId, 'simulation.resumed', {});
   }
@@ -321,6 +338,10 @@ export class SimulationEngine {
    * Main simulation tick — called every TICK_RATE_MS real milliseconds.
    */
   private tick(): void {
+    if (this.clock.isPaused || this.clock.speed === 0) {
+      this.lastTickTime = Date.now();
+      return;
+    }
     const now = Date.now();
     const deltaMs = now - this.lastTickTime;
     this.lastTickTime = now;
@@ -329,6 +350,7 @@ export class SimulationEngine {
     // 1. Advance simulation clock
     this.clock.tick(deltaMs);
     const simTime = this.clock.getSimulatedTime();
+    const deltaSimMs = deltaMs * this.clock.speed * 60;
 
     // 2. Poll upstream ecommerce-hive-nosql periodically (every 50 ticks = 5 seconds)
     if (this.tickCounter % 50 === 0) {
@@ -342,7 +364,7 @@ export class SimulationEngine {
     this.dispatchPendingOrders();
 
     // 5. Move vehicles along their routes
-    this.updateVehicles(simTime, deltaMs);
+    this.updateVehicles(simTime, deltaSimMs);
 
     // 6. Phase 4: Run Predictive AI rebalancing cycle if enabled
     if (this.activeDispatchStrategy === 'predictive_ai' && this.tickCounter % 30 === 0) {
@@ -384,7 +406,7 @@ export class SimulationEngine {
       slaDurationMin: 35,
       slaDeadline: this.clock.getSimulatedTime() + 35 * 60 * 1000,
       slaStatus: 'on_time',
-      items: eOrder.items || [{ name: 'Marketplace Item', quantity: 1 }],
+      items: structuredClone(eOrder.items) || [{ name: 'Marketplace Item', quantity: 1 }],
       totalWeight_kg: totalWeight,
       pickupLocation: depot.position,
       deliveryLocation,
@@ -446,7 +468,7 @@ export class SimulationEngine {
       return { lat: 11.5750, lon: 104.9310 }; // Riverside (~1.8 km)
     }
     return randomPointInBounds(this.world.getConfig().bounds, {
-      nextFloat: (min, max) => min + Math.random() * (max - min),
+      nextFloat: (min, max) => this.world.getRng().nextFloat(min, max),
     });
   }
 
@@ -463,7 +485,7 @@ export class SimulationEngine {
   public loadScenario(
     scenarioId: string,
     options: { seedOrders?: boolean } = {}
-  ): { success: boolean; message: string; scenario: ScenarioConfig } {
+  ): { success: boolean; message: string; scenario: ScenarioConfig; state?: SimulationState } {
     const scenario = SCENARIO_PRESETS[scenarioId];
     if (!scenario) {
       return { success: false, message: `Scenario preset "${scenarioId}" not found.`, scenario: SCENARIO_PRESETS.morning_delivery };
@@ -522,15 +544,192 @@ export class SimulationEngine {
   }
 
   /**
+   * Reset simulation engine to clean initial zero-state.
+   */
+  public reset(
+    scenarioConfig?: ScenarioConfig,
+    options: { seedOrders?: boolean } = {}
+  ): { success: boolean; message: string; state: SimulationState } {
+    this.stop();
+
+    const config = scenarioConfig ?? (SCENARIO_PRESETS[this.activeScenarioId] || defaultScenario);
+    this.activeScenarioId = config.id || this.activeScenarioId || 'morning_delivery';
+    this.simulationId = `sim-${this.activeScenarioId}-${config.seed}`;
+
+    // Reset clock to 0 ms, speed 1
+    this.clock.reset(0, 1);
+
+    // Reset world with config (reseeds PRNG with config.seed)
+    this.world.reset(config);
+
+    // Reset event bus & monotonic event sequence counter
+    this.eventBus.clear();
+    this.eventSequenceNumber = 0;
+
+    // Reset counters & timing
+    this.tickCounter = 0;
+    this.incidentCounter = 0;
+    this.lastTickTime = 0;
+    this.lastOrderGenTime = 0;
+    this.ordersGenerated = 0;
+    this.targetOrderCount = config.orderCount;
+    const durationMs = config.duration_hours * 60 * 60 * 1000;
+    this.orderGenerationIntervalMs = durationMs / this.targetOrderCount;
+
+    // Clear queues & pending actions
+    this.dispatchQueue = [];
+    this.dispatching = false;
+    this.incidents = [];
+    this.runInvalidated = false;
+    this.invalidationReason = undefined;
+
+    // Recreate fresh persistence layer (clears in-memory repositories)
+    this.persistence = createPersistenceLayer();
+
+    // Reset sub-engines
+    this.chaosEngine.reset(config.seed);
+    this.predictiveAiEngine.reset();
+
+    // Reset metrics
+    this.benchmarkMetrics = {
+      totalQueries: 0,
+      totalQueryTimeMs: 0,
+      totalNodesVisited: 0,
+      totalOrdersAssigned: 0,
+    };
+    this.cumulativeDistanceKm = 0;
+
+    // Optional initial seed orders (if requested)
+    if (options.seedOrders) {
+      this.seedInitialOrders(20);
+    }
+
+    this.emitEvent('simulation', this.simulationId, 'simulation.reset', {
+      scenarioId: this.activeScenarioId,
+      seed: config.seed,
+    });
+
+    console.log(`[SimulationEngine] Reset simulation ${this.simulationId} to clean zero-state.`);
+    return {
+      success: true,
+      message: `Reset simulation ${this.simulationId} to clean zero-state.`,
+      state: this.getState(),
+    };
+  }
+
+  /**
+   * Execute discrete simulation steps.
+   * Advances the simulation by a fixed number of steps with a specified or default simulation delta.
+   */
+  public step(
+    steps: number = 1,
+    deltaSimMs?: number
+  ): { stepsExecuted: number; simTime: number; deltaSimMs: number } {
+    const effectiveSteps = Math.max(1, Math.floor(steps));
+    const stepDeltaSim = deltaSimMs ?? (this.TICK_RATE_MS * (this.clock.speed || 1) * 60);
+
+    const wasPaused = this.clock.isPaused;
+    this.clock.resume();
+
+    try {
+      for (let i = 0; i < effectiveSteps; i++) {
+        this.tickCounter++;
+
+        // 1. Advance simulation clock
+        this.clock.step(stepDeltaSim);
+        const simTime = this.clock.getSimulatedTime();
+
+        // 2. Poll upstream orders periodically
+        if (this.tickCounter % 50 === 0) {
+          this.pollEcommerceOrders();
+        }
+
+        // 3. Generate scenario orders
+        this.generateOrders(simTime);
+
+        // 4. Dispatch pending orders
+        this.dispatchPendingOrders();
+
+        // 5. Move vehicles along route geometry
+        this.updateVehicles(simTime, stepDeltaSim);
+
+        // 6. Predictive AI rebalancing
+        if (this.activeDispatchStrategy === 'predictive_ai' && this.tickCounter % 30 === 0) {
+          this.evaluatePredictiveRebalancing(simTime);
+        }
+
+        // 7. Phnom Penh Urban Chaos Engine loop
+        this.chaosEngine.tick(simTime, this);
+      }
+    } finally {
+      if (wasPaused) {
+        this.clock.pause();
+      }
+    }
+
+    this.emitEvent('simulation', this.simulationId, 'simulation.stepped', {
+      stepsExecuted: effectiveSteps,
+      deltaSimMs: stepDeltaSim,
+      simTime: this.clock.getSimulatedTime(),
+    });
+
+    return {
+      stepsExecuted: effectiveSteps,
+      simTime: this.clock.getSimulatedTime(),
+      deltaSimMs: stepDeltaSim,
+    };
+  }
+
+  /**
+   * Compute the canonical event sequence SHA-256 hash across all emitted events.
+   */
+  public getEventSequenceHash(): { hash: string; eventCount: number; simulationId: string } {
+    const events = this.eventBus.getHistory();
+    const hash = computeCanonicalEventSequenceHash(events);
+    return {
+      hash,
+      eventCount: events.length,
+      simulationId: this.simulationId,
+    };
+  }
+
+  /**
    * Sort pending dispatch queue using Earliest Deadline First (EDF) priority.
    */
+  /**
+   * Safely remove a specific order ID from the dispatch queue.
+   * Prevents concurrency races where blind shift() evicts unshifted orders.
+   */
+  private dequeueOrder(orderId: string): boolean {
+    const idx = this.dispatchQueue.indexOf(orderId);
+    if (idx !== -1) {
+      this.dispatchQueue.splice(idx, 1);
+      return true;
+    }
+    return false;
+  }
+
   private sortDispatchQueueByEDF(): void {
     this.dispatchQueue.sort((idA, idB) => {
       const orderA = this.world.getOrder(idA);
       const orderB = this.world.getOrder(idB);
       const deadlineA = orderA?.slaDeadline ?? Infinity;
       const deadlineB = orderB?.slaDeadline ?? Infinity;
-      return deadlineA - deadlineB;
+      if (deadlineA !== deadlineB) {
+        return deadlineA - deadlineB;
+      }
+      const PRIORITY_RANKS: Record<string, number> = { urgent: 0, express: 1, standard: 2 };
+      const rankA = orderA?.priority ? (PRIORITY_RANKS[orderA.priority] ?? 2) : 2;
+      const rankB = orderB?.priority ? (PRIORITY_RANKS[orderB.priority] ?? 2) : 2;
+      if (rankA !== rankB) {
+        return rankA - rankB;
+      }
+      const seqA = orderA?.creationSeq ?? orderA?.createdAt ?? 0;
+      const seqB = orderB?.creationSeq ?? orderB?.createdAt ?? 0;
+      if (seqA !== seqB) {
+        return seqA - seqB;
+      }
+      return idA.localeCompare(idB);
     });
   }
 
@@ -566,25 +765,6 @@ export class SimulationEngine {
       this.dispatchQueue.push(order.id);
       this.sortDispatchQueueByEDF();
       this.persistence.orders.saveOrder(order).catch(() => {});
-
-      if (this.ecommerceClient.getStatus().connected) {
-        this.ecommerceClient.createMarketplaceOrder({
-          order_id: order.id,
-          customer_id: order.customerId,
-          customer_name: `Customer (${order.customerId})`,
-          items: order.items.map(it => ({
-            product_id: it.product_id || 'P-ITEM',
-            name: it.name,
-            quantity: it.quantity,
-            price: it.price || 10,
-            category: it.category,
-            weight_kg: it.weight_kg,
-          })),
-          total: order.items.reduce((acc, it) => acc + (it.price || 10) * it.quantity, 0),
-          province: 'Phnom Penh',
-          status: 'Pending',
-        }).catch(() => {});
-      }
 
       this.emitEvent('order', order.id, 'order.created', {
         customerId: order.customerId,
@@ -654,7 +834,6 @@ export class SimulationEngine {
                 order.assignedVehicleId = vehicle.id;
                 order.assignedAt = this.clock.getSimulatedTime();
                 this.persistence.relationships.syncOrder(order, vehicle.id).catch(() => {});
-                this.ecommerceClient.updateOrderStatus(order.id, 'Out for Delivery', vehicle.driverId);
               }
               // Remove from queue
               const qIndex = this.dispatchQueue.indexOf(orderId);
@@ -687,7 +866,7 @@ export class SimulationEngine {
     const orderId = this.dispatchQueue[0];
     const order = this.world.getOrder(orderId);
     if (!order || order.status !== 'pending') {
-      this.dispatchQueue.shift();
+      this.dequeueOrder(orderId);
       this.dispatching = false;
       return;
     }
@@ -731,8 +910,6 @@ export class SimulationEngine {
             // Synchronize into Neo4j Relationship Graph
             this.persistence.relationships.syncOrder(order, vehicle.id).catch(() => {});
 
-            // Update upstream ecommerce-hive-nosql status (Out for Delivery)
-            this.ecommerceClient.updateOrderStatus(order.id, 'Out for Delivery', vehicle.driverId);
 
             this.emitEvent('order', order.id, 'order.assigned', {
               vehicleId: vehicle.id,
@@ -750,12 +927,15 @@ export class SimulationEngine {
               distanceM: result.route.distanceM,
             });
           }
-          this.dispatchQueue.shift();
+          this.dequeueOrder(order.id);
         }
         this.dispatching = false;
       })
       .catch((err) => {
         console.error('[SimulationEngine] Dispatch error:', err);
+        if (this.strictRouting || err instanceof StrictRoutingError) {
+          this.invalidateRun((err as Error).message);
+        }
         this.dispatching = false;
       });
   }
@@ -806,7 +986,8 @@ export class SimulationEngine {
   /**
    * Update all vehicle positions by advancing them along their route geometry.
    */
-  private updateVehicles(simTime: number, deltaRealMs: number): void {
+  private updateVehicles(simTime: number, deltaSimMs: number): void {
+    if (this.clock.isPaused || deltaSimMs <= 0) return;
     // 1. SLA deadline monitoring across active orders
     for (const order of this.world.getAllOrders()) {
       if (order.status === 'delivered' || order.status === 'cancelled') continue;
@@ -832,7 +1013,7 @@ export class SimulationEngine {
     // 2. Advance vehicle positions
     for (const vehicle of this.world.getAllVehicles()) {
       if (vehicle.status === 'en_route' || vehicle.status === 'returning') {
-        this.advanceVehicle(vehicle, deltaRealMs);
+        this.advanceVehicle(vehicle, deltaSimMs);
       }
     }
   }
@@ -840,13 +1021,14 @@ export class SimulationEngine {
   /**
    * Advance a single vehicle along its route geometry.
    */
-  private advanceVehicle(vehicle: Vehicle, deltaRealMs: number): void {
+  private advanceVehicle(vehicle: Vehicle, deltaSimMs: number): void {
+    if (this.clock.isPaused || deltaSimMs <= 0) return;
     if (vehicle.routeGeometry.length < 2 || vehicle.routeDurationS <= 0) {
       this.completeVehicleRoute(vehicle);
       return;
     }
 
-    const deltaSimMs = deltaRealMs * this.clock.speed * 60;
+    // deltaSimMs is passed directly
     const deltaSimS = deltaSimMs / 1000;
 
     // Traffic congestion slows down effective vehicle progress
@@ -874,7 +1056,7 @@ export class SimulationEngine {
       }
     }
 
-    // Emit position update event & stream Cassandra ping to ecommerce-hive-nosql (every 5 ticks = 500ms)
+    // Record local simulated telemetry every 5 ticks (500ms).
     if (this.tickCounter % 5 === 0) {
       this.emitEvent('vehicle', vehicle.id, 'vehicle.position.updated', {
         lat: newPosition.lat,
@@ -883,12 +1065,10 @@ export class SimulationEngine {
         speed_kmh: vehicle.speed_kmh,
       });
 
-      // Stream GPS ping to Cassandra persistence
-      const pingDate = new Date().toISOString().split('T')[0];
       const ping: TelemetryPing = {
         rider_id: vehicle.driverId,
         ping_timestamp: simTime,
-        ping_date: pingDate,
+        ping_date: new Date(simTime).toISOString().split('T')[0],
         lat: newPosition.lat,
         lon: newPosition.lon,
         speed_kmh: vehicle.speed_kmh,
@@ -896,19 +1076,15 @@ export class SimulationEngine {
         status: vehicle.status,
         simulation_id: this.simulationId,
       };
-      this.persistence.telemetry.savePing(ping).catch(() => {});
+      this.persistence.telemetry.savePing(ping).catch((error: unknown) => {
+        this.emitEvent('vehicle', vehicle.id, 'telemetry.storage.failed', {
+          source: 'simulated', durable: false, stored: false,
+          error: error instanceof Error ? error.message : 'Telemetry storage failed',
+        });
+      });
       this.persistence.vehicles.saveVehicleState(vehicle).catch(() => {});
 
-      // Stream GPS ping to Cassandra via upstream ecommerce API
-      const driver = this.world.getDriver(vehicle.driverId);
-      this.ecommerceClient.sendRiderPing(
-        vehicle.driverId,
-        newPosition,
-        vehicle.speed_kmh,
-        92,
-        vehicle.status,
-        driver?.name || vehicle.driverName
-      );
+
     }
 
     // Check if vehicle reached destination
@@ -937,7 +1113,6 @@ export class SimulationEngine {
           vehicle.currentLoad_kg = Math.max(0, vehicle.currentLoad_kg - order.totalWeight_kg);
           this.persistence.orders.updateOrderStatus(order.id, 'delivered', simTime).catch(() => {});
           this.persistence.relationships.updateOrderStatus(order.id, 'delivered').catch(() => {});
-          this.ecommerceClient.updateOrderStatus(order.id, 'Delivered', vehicle.driverId);
 
           this.emitEvent('order', order.id, 'order.delivered', {
             vehicleId: vehicle.id,
@@ -990,8 +1165,6 @@ export class SimulationEngine {
           this.persistence.orders.updateOrderStatus(orderId, 'delivered', simTime).catch(() => {});
           this.persistence.relationships.updateOrderStatus(orderId, 'delivered').catch(() => {});
 
-          // Notify upstream marketplace that order is Delivered
-          this.ecommerceClient.updateOrderStatus(orderId, 'Delivered', vehicle.driverId);
 
           this.emitEvent('order', orderId, 'order.delivered', {
             vehicleId: vehicle.id,
@@ -1069,14 +1242,16 @@ export class SimulationEngine {
     vehicle.trailHistory = [];
   }
 
-  private emitEvent(
+  public emitEvent(
     entityType: string,
     entityId: string,
     eventType: string,
     payload: Record<string, unknown>
   ): void {
+    this.eventSequenceNumber++;
     const event: SimulationEvent = {
-      eventId: uuidv4(),
+      sequenceNumber: this.eventSequenceNumber,
+      eventId: `EVT-${this.simulationId.slice(0, 8)}-${String(this.eventSequenceNumber).padStart(6, '0')}`,
       simulationId: this.simulationId,
       simTimestamp: this.clock.getSimulatedTime(),
       realTimestamp: Date.now(),
@@ -1091,6 +1266,40 @@ export class SimulationEngine {
   /**
    * Get current full simulation state.
    */
+  public getStatus(): 'running' | 'paused' | 'stopped' | 'invalidated' {
+    if (this.runInvalidated) {
+      return 'invalidated';
+    }
+    if (!this.intervalId && !this.clock.isPaused) {
+      return 'stopped';
+    }
+    if (this.clock.isPaused || this.clock.speed === 0) {
+      return 'paused';
+    }
+    return 'running';
+  }
+
+  public setStrictRouting(strict: boolean, requireRealGraph: boolean = false): void {
+    this.strictRouting = strict;
+    this.requireRealGraph = requireRealGraph;
+    this.routingClient.setStrictMode(strict);
+  }
+
+  public isStrictRouting(): boolean {
+    return this.strictRouting;
+  }
+
+  public invalidateRun(reason: string): void {
+    this.runInvalidated = true;
+    this.invalidationReason = reason;
+    this.stop();
+    this.emitEvent('simulation', this.simulationId, 'simulation.invalidated', {
+      simulationId: this.simulationId,
+      reason,
+      simulatedTime: this.clock.getSimulatedTime(),
+    });
+  }
+
   public getState(): SimulationState {
     const vehicles = this.world.getAllVehicles();
     const orders = this.world.getAllOrders();
@@ -1149,11 +1358,12 @@ export class SimulationEngine {
       simulationId: this.simulationId,
       simTime: this.clock.getSimulatedTime(),
       speed: this.clock.speed,
-      status: this.intervalId
-        ? this.clock.speed > 0
-          ? 'running'
-          : 'paused'
-        : 'stopped',
+      status: this.getStatus(),
+      // status ternary removed
+      //
+      //
+      //
+      //
       vehicles,
       orders,
       warehouses: this.world.getAllWarehouses(),
@@ -1166,6 +1376,9 @@ export class SimulationEngine {
       predictiveAi: predictiveMetrics,
       chaosMode: this.chaosEngine.getMode(),
       chaosActiveEventsCount: this.chaosEngine.getActiveEvents().length,
+      strictRouting: this.strictRouting,
+      requireRealGraph: this.requireRealGraph,
+      invalidationReason: this.invalidationReason,
       stats: {
         activeVehicles: activeVehicles.length,
         totalOrders: orders.length,
@@ -1206,7 +1419,7 @@ export class SimulationEngine {
     if (!order) return { success: false, message: 'Order not found', actionTaken: 'none' };
 
     order.priority = 'urgent';
-    order.slaDeadline += 15 * 60 * 1000; // Emergency 15-minute priority extension
+    order.slaDeadline = (order.slaDeadline ?? this.clock.getSimulatedTime()) + 15 * 60 * 1000; // Emergency 15-minute priority extension
 
     if (order.assignedVehicleId) {
       const v = this.world.getVehicle(order.assignedVehicleId);
@@ -1330,7 +1543,8 @@ export class SimulationEngine {
     severity?: 'low' | 'medium' | 'high' | 'critical';
     autoRerouteAffected?: boolean;
   }): RoadIncident {
-    const id = `INC-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    this.incidentCounter++;
+    const id = `INC-${String(this.incidentCounter).padStart(4, '0')}`;
     const incident: RoadIncident = {
       id,
       type: incidentData.type,
@@ -1886,46 +2100,8 @@ export class SimulationEngine {
     // Run an immediate dispatch pass
     await this.dispatchPendingOrders();
 
-    // Push order into upstream ecommerce-hive-nosql marketplace (MongoDB)
-    let ecommerceSynced = false;
-    try {
-      const isUp = await this.ecommerceClient.checkHealth();
-      if (isUp) {
-        const preset = options.presetId
-          ? DELIVERY_CORRIDOR_PRESETS.find(p => p.id === options.presetId)
-          : null;
-
-        const customer = this.world.getCustomer(order.customerId);
-        const marketplaceItems = (order.items || []).map(i => ({
-          product_id: i.product_id || 'P5004',
-          name: i.name || 'Traditional Khmer Herbal Inhaler & Refreshing Balm Duo',
-          quantity: i.quantity || 1,
-          price: i.price || 5.5,
-          weight_kg: i.weight_kg || 0.1,
-        }));
-
-        const totalAmount = marketplaceItems.reduce((acc, i) => acc + (i.price * i.quantity), 0);
-
-        const pushSuccess = await this.ecommerceClient.createMarketplaceOrder({
-          order_id: order.id,
-          customer_id: order.customerId,
-          customer_name: customer?.name || customerName || 'Express Customer',
-          items: marketplaceItems,
-          total: totalAmount > 0 ? totalAmount : 25.0,
-          province: 'Phnom Penh',
-          delivery_address: preset ? preset.delivery.name : 'Phnom Penh Urban Route',
-          status: 'Pending',
-        });
-
-        if (pushSuccess) {
-          ecommerceSynced = true;
-          this.ecommerceClient.recordOrderIngested();
-          console.log(`[SimulationEngine] Injected order ${order.id} mirrored to upstream ecommerce marketplace (Port 4000) ✓`);
-        }
-      }
-    } catch (err: any) {
-      console.warn(`[SimulationEngine] Ecommerce marketplace sync skipped: ${err?.message}`);
-    }
+    // Simulation orders are never mirrored to the operational source.
+    const ecommerceSynced = false;
 
     const assignedVehicle = order.assignedVehicleId ? this.world.getVehicle(order.assignedVehicleId) : null;
     const msg = assignedVehicle

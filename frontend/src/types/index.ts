@@ -71,10 +71,23 @@ export interface Order {
   deliveryLocation: Coordinate;
   assignedVehicleId: string | null;
   createdAt: number;
+  creationSeq?: number;
   assignedAt: number | null;
   deliveredAt: number | null;
   estimatedDeliveryTime: number | null;
 }
+
+/*
+  sequenceNumber?: number;
+  eventId: string;
+  simulationId: string;
+  simTimestamp: number;
+  realTimestamp?: number;
+  entityType: string;
+  entityId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+*/
 
 export interface Warehouse {
   id: string;
@@ -182,6 +195,7 @@ export interface PredictiveAiMetrics {
 }
 
 export interface TelemetryPlaybackPing {
+  simulation_id: string;
   rider_id: string;
   ping_timestamp: number;
   ping_date: string;
@@ -193,6 +207,16 @@ export interface TelemetryPlaybackPing {
 }
 
 export interface TelemetryPlaybackData {
+  schemaVersion: 1;
+  source: 'simulated';
+  sourceId: string;
+  simulationId: string;
+  tenantId: 'demo';
+  storage: 'in-memory';
+  durable: false;
+  sinkOwner: 'logistics-sandbox';
+  status: 'available';
+  units: { coordinates: 'degrees'; speed: 'km/h'; battery: 'percent'; time: 'simulation-ms' };
   riderId: string;
   vehicleId: string | null;
   vehicleName: string;
@@ -255,6 +279,7 @@ export interface SimulationState {
 }
 
 export interface SimulationEvent {
+  sequenceNumber?: number;
   eventId: string;
   simulationId: string;
   simTimestamp: number;

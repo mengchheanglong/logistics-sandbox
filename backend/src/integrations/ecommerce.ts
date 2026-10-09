@@ -1,15 +1,4 @@
-/**
- * @fileoverview Integration client for the upstream ecommerce-hive-nosql platform.
- *
- * Connects the Logistics Sandbox digital twin to the e-commerce marketplace:
- * 1. Synchronizes item catalog and live inventory between marketplace and simulation
- * 2. Ingests customer orders from ecommerce-hive-nosql (MongoDB backend on port 4000)
- * 3. Emits status updates back (Pending -> Preparing -> Out for Delivery -> Delivered)
- * 4. Deducts/adjusts live inventory stock in real-time as simulation fulfills orders
- * 5. Streams simulated rider GPS telemetry pings into ecommerce-hive-nosql (Cassandra ingest on /api/riders/ping)
- */
-
-import { Coordinate } from '../world/types.js';
+/** Read-only marketplace adapter. Simulation results stay in local repositories. */
 
 export interface EcommerceOrderItem {
   product_id: string;
@@ -51,6 +40,8 @@ export interface EcommerceBridgeStatus {
   ordersIngestedCount: number;
   telemetryPingsEmittedCount: number;
   catalogItemsCount: number;
+  accessMode: 'read-only';
+  egressPolicy: 'DISABLED';
 }
 
 export interface HiveProvinceRevenue {
@@ -122,16 +113,29 @@ export const FALLBACK_CAMBODIA_CATALOG: EcommerceProduct[] = [
   { product_id: 'P5005', name: 'Kampot Sea Salt Body Scrub 250g', category: 'Beauty & Wellness', price: 11.5, stock: 65, weight_kg: 0.35 },
 ];
 
-export class EcommerceClient {
+export class EcommerceReadClient {
   private baseUrl: string;
   private isAvailable: boolean = false;
   private lastCheckTime: number = 0;
   private ingestedOrdersCount: number = 0;
-  private pingsEmittedCount: number = 0;
-  private catalog: EcommerceProduct[] = [...FALLBACK_CAMBODIA_CATALOG];
+  private catalog: EcommerceProduct[] = structuredClone(
+    FALLBACK_CAMBODIA_CATALOG,
+  );
 
   constructor(baseUrl: string = 'http://localhost:4000') {
-    this.baseUrl = baseUrl;
+    const url = new URL(baseUrl);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
+      throw new Error(
+        'Marketplace read URL must be HTTP(S) without credentials, query or fragment',
+      );
+    }
+    this.baseUrl = url.href.replace(/\/+$/, '');
   }
 
   /**
@@ -141,6 +145,8 @@ export class EcommerceClient {
     try {
       const res = await fetch(`${this.baseUrl}/api/products/meta/counts`, {
         method: 'GET',
+        redirect: 'error',
+        credentials: 'omit',
         signal: AbortSignal.timeout(2000),
       });
       this.isAvailable = res.ok;
@@ -161,17 +167,25 @@ export class EcommerceClient {
    * Fetch and cache products from upstream ecommerce catalog.
    */
   public async fetchCatalog(): Promise<EcommerceProduct[]> {
-    if (!this.isAvailable) return this.catalog;
+    if (!this.isAvailable) return structuredClone(this.catalog);
     try {
       const res = await fetch(`${this.baseUrl}/api/products`, {
+        method: 'GET',
+        redirect: 'error',
+        credentials: 'omit',
         signal: AbortSignal.timeout(2500),
       });
-      if (!res.ok) return this.catalog;
+      if (!res.ok) return structuredClone(this.catalog);
       const data = await res.json();
-      const list = Array.isArray(data) ? data : Array.isArray(data?.products) ? data.products : [];
+      const list = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.products)
+          ? data.products
+          : [];
       if (list.length > 0) {
-        this.catalog = list.map((p: any) => ({
-          product_id: p.product_id || `P${Math.floor(1000 + Math.random() * 9000)}`,
+        this.catalog = list.map((p: any, index: number) => ({
+          product_id:
+            p.product_id || `P${String(index + 1000).padStart(4, '0')}`,
           name: p.name || 'Marketplace Item',
           category: p.category || 'General',
           price: Number(p.price) || 10,
@@ -179,15 +193,17 @@ export class EcommerceClient {
           weight_kg: p.weight_kg ? Number(p.weight_kg) : this.estimateWeight(p),
         }));
       }
-      return this.catalog;
+      return structuredClone(this.catalog);
     } catch (err) {
-      console.warn(`[EcommerceClient] Failed to fetch catalog: ${(err as Error).message}`);
-      return this.catalog;
+      console.warn(
+        `[EcommerceClient] Failed to fetch catalog: ${(err as Error).message}`,
+      );
+      return structuredClone(this.catalog);
     }
   }
 
   public getCatalog(): EcommerceProduct[] {
-    return this.catalog;
+    return structuredClone(this.catalog);
   }
 
   private estimateWeight(p: any): number {
@@ -200,159 +216,50 @@ export class EcommerceClient {
     if (name.includes('honey') || name.includes('beans')) return 0.6;
     if (name.includes('power bank')) return 0.45;
     if (name.includes('phone')) return 0.35;
-    if (name.includes('pepper') || name.includes('salt') || name.includes('shirt')) return 0.25;
+    if (
+      name.includes('pepper') ||
+      name.includes('salt') ||
+      name.includes('shirt')
+    )
+      return 0.25;
     return 0.5;
   }
 
   /**
-   * Adjust/decrement stock in upstream ecommerce MongoDB store.
-   */
-  public async adjustStock(items: Array<{ product_id: string; quantity: number }>): Promise<boolean> {
-    // Also decrement local catalog cache
-    for (const item of items) {
-      const p = this.catalog.find(c => c.product_id === item.product_id);
-      if (p) {
-        p.stock = Math.max(0, p.stock - Number(item.quantity || 1));
-      }
-    }
-
-    try {
-      const res = await fetch(`${this.baseUrl}/api/products/adjust-stock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items }),
-        signal: AbortSignal.timeout(2000),
-      });
-      if (res.ok) this.isAvailable = true;
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Push a simulated scenario order to the upstream ecommerce marketplace.
-   */
-  public async createMarketplaceOrder(order: {
-    order_id: string;
-    customer_id: string;
-    customer_name: string;
-    items: EcommerceOrderItem[];
-    total: number;
-    province?: string;
-    delivery_address?: string;
-    status?: string;
-    assigned_courier_id?: string;
-  }): Promise<boolean> {
-    if (!this.isAvailable) return false;
-    try {
-      const res = await fetch(`${this.baseUrl}/api/orders`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          order_id: order.order_id,
-          customer_id: order.customer_id,
-          customer_name: order.customer_name,
-          items: order.items,
-          total: order.total,
-          province: order.province || 'Phnom Penh',
-          payment_method: 'Bakong KHQR',
-          status: order.status || 'Pending',
-          delivery_address: order.delivery_address || 'Phnom Penh City Center',
-          assigned_courier_id: order.assigned_courier_id,
-        }),
-        signal: AbortSignal.timeout(2000),
-      });
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Fetch active orders from ecommerce-hive-nosql (status: "Pending" or "Preparing").
+   * Read pending operational orders into the simulation.
    */
   public async fetchPendingOrders(): Promise<EcommerceOrder[]> {
     if (!this.isAvailable) return [];
     try {
       const res = await fetch(`${this.baseUrl}/api/orders`, {
+        method: 'GET',
+        redirect: 'error',
+        credentials: 'omit',
         signal: AbortSignal.timeout(3000),
       });
       if (!res.ok) return [];
       const data = await res.json();
-      const list = Array.isArray(data) ? data : Array.isArray((data as any)?.orders) ? (data as any).orders : Array.isArray((data as any)?.data) ? (data as any).data : [];
+      const list = Array.isArray(data)
+        ? data
+        : Array.isArray((data as any)?.orders)
+          ? (data as any).orders
+          : Array.isArray((data as any)?.data)
+            ? (data as any).data
+            : [];
       return list.filter(
-        (o: any) => o && (o.status === 'Pending' || o.status === 'Preparing')
+        (o: any) => o && (o.status === 'Pending' || o.status === 'Preparing'),
       );
     } catch (err) {
-      console.warn(`[EcommerceClient] Failed to fetch orders: ${(err as Error).message}`);
+      console.warn(
+        `[EcommerceClient] Failed to fetch orders: ${(err as Error).message}`,
+      );
       return [];
     }
   }
 
   /**
-   * Update order status in ecommerce-hive-nosql.
-   * e.g., transition to "Out for Delivery" or "Delivered".
+   * Count orders copied into the local simulation.
    */
-  public async updateOrderStatus(
-    orderId: string,
-    status: 'Pending' | 'Preparing' | 'Out for Delivery' | 'Delivered' | 'Cancelled',
-    courierId?: string
-  ): Promise<boolean> {
-    try {
-      const res = await fetch(`${this.baseUrl}/api/orders/${orderId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, courier_id: courierId }),
-        signal: AbortSignal.timeout(2500),
-      });
-      if (res.ok) {
-        this.isAvailable = true;
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Stream simulated rider telemetry ping directly into ecommerce-hive-nosql
-   * which ingests it into Apache Cassandra (`rider_gps_pings` table).
-   */
-  public async sendRiderPing(
-    riderId: string,
-    pos: Coordinate,
-    speedKmh: number,
-    battery: number = 92,
-    status?: string,
-    driverName?: string
-  ): Promise<boolean> {
-    try {
-      const res = await fetch(`${this.baseUrl}/api/riders/ping`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rider_id: riderId,
-          lat: pos.lat,
-          lng: pos.lon,
-          speed: `${speedKmh.toFixed(1)} km/h`,
-          battery: Math.round(battery),
-          status: status || 'Delivering',
-          name: driverName || `Driver ${riderId}`,
-          city: 'Phnom Penh',
-        }),
-        signal: AbortSignal.timeout(1000),
-      });
-      if (res.ok) {
-        this.pingsEmittedCount++;
-      }
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
-
   public recordOrderIngested(): void {
     this.ingestedOrdersCount++;
   }
@@ -363,6 +270,9 @@ export class EcommerceClient {
   public async fetchWarehouseAnalytics(): Promise<HiveWarehouseAnalytics | null> {
     try {
       const res = await fetch(`${this.baseUrl}/api/analytics`, {
+        method: 'GET',
+        redirect: 'error',
+        credentials: 'omit',
         signal: AbortSignal.timeout(3000),
       });
       if (res.ok) {
@@ -380,9 +290,15 @@ export class EcommerceClient {
    */
   public async executeHiveQuery(queryId: string): Promise<HiveQueryResult> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/analytics/query/${encodeURIComponent(queryId)}`, {
-        signal: AbortSignal.timeout(3000),
-      });
+      const res = await fetch(
+        `${this.baseUrl}/api/analytics/query/${encodeURIComponent(queryId)}`,
+        {
+          method: 'GET',
+          redirect: 'error',
+          credentials: 'omit',
+          signal: AbortSignal.timeout(3000),
+        },
+      );
       if (res.ok) {
         this.isAvailable = true;
         return (await res.json()) as HiveQueryResult;
@@ -413,13 +329,30 @@ export class EcommerceClient {
 
   public getStatus(): EcommerceBridgeStatus {
     return {
+      accessMode: 'read-only',
+      egressPolicy: 'DISABLED',
       enabled: true,
       connected: this.isAvailable,
       baseUrl: this.baseUrl,
       lastSyncTimestamp: this.lastCheckTime || null,
       ordersIngestedCount: this.ingestedOrdersCount,
-      telemetryPingsEmittedCount: this.pingsEmittedCount,
+      telemetryPingsEmittedCount: 0,
       catalogItemsCount: this.catalog.length,
     };
   }
 }
+
+export type MarketplaceReadAdapter = Pick<
+  EcommerceReadClient,
+  | 'checkHealth'
+  | 'fetchCatalog'
+  | 'getCatalog'
+  | 'fetchPendingOrders'
+  | 'recordOrderIngested'
+  | 'fetchWarehouseAnalytics'
+  | 'executeHiveQuery'
+  | 'getStatus'
+>;
+
+// Compatibility name for existing read-only consumers. No write methods are exported.
+export { EcommerceReadClient as EcommerceClient };

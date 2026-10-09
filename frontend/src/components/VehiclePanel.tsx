@@ -124,7 +124,7 @@ export function VehiclePanel({
             <button
               onClick={() => onOpenTripPlayback(vehicle.id)}
               className="w-full py-2 px-3 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border bg-slate-950/80 hover:bg-cyan-950/40 text-cyan-300 border-cyan-500/40 hover:border-cyan-400 shadow-sm"
-              title="Open Cassandra Historical Telemetry Scrubber"
+              title="Open Simulated In-Memory Telemetry Scrubber"
             >
               <span>📼</span>
               <span>REPLAY TRIP HISTORY (CASSANDRA)</span>

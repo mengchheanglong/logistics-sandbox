@@ -987,7 +987,7 @@ export function MapView({
       },
     });
 
-    // Phase 4: Historical Cassandra Telemetry Breadcrumb Trail
+    // Historical simulated in-memory telemetry breadcrumb trail
     const playbackPathLayer = new PathLayer({
       id: 'playback-breadcrumb-trail-layer',
       data: playbackTrailPings && playbackTrailPings.length > 1 ? [{
@@ -997,7 +997,7 @@ export function MapView({
       widthMinPixels: 4,
       widthMaxPixels: 9,
       getPath: (d: any) => d.path,
-      getColor: [245, 158, 11, 230], // Amber Gold Cassandra GPS Trail
+      getColor: [245, 158, 11, 230], // Amber simulated GPS trail
       visible: !!(playbackTrailPings && playbackTrailPings.length > 1),
     });
 

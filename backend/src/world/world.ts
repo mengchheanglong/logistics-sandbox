@@ -226,6 +226,7 @@ export class World {
       deliveryLocation,
       assignedVehicleId: null,
       createdAt: simTimestamp,
+      creationSeq: this.orderCounter,
       assignedAt: null,
       pickedUpAt: null,
       deliveredAt: null,
@@ -296,6 +297,7 @@ export class World {
       deliveryLocation: options.deliveryLocation,
       assignedVehicleId: null,
       createdAt: options.simTimestamp,
+      creationSeq: this.orderCounter,
       assignedAt: null,
       pickedUpAt: null,
       deliveredAt: null,
@@ -319,8 +321,9 @@ export class World {
   /**
    * Reset world state and re-initialize with a new scenario config.
    */
-  public reset(config: ScenarioConfig): void {
+  public reset(config: ScenarioConfig = this.config): void {
     this.config = config;
+    this.rng = new SeededRandom(config.seed);
     this.vehicles.clear();
     this.orders.clear();
     this.warehouses.clear();
@@ -329,6 +332,10 @@ export class World {
     this.orderCounter = 0;
     this.customerCounter = 0;
     this.initializeFromConfig(config);
+  }
+
+  public getRng(): SeededRandom {
+    return this.rng;
   }
 
   public addVehicle(vehicle: Vehicle): void {

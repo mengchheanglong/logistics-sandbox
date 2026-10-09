@@ -4,14 +4,30 @@
  * At 1x speed, 1 real second = 1 simulated minute.
  */
 
-export class SimulationClock {
+export interface ISimulationClock {
+  currentTime: number;
+  speed: number;
+  isPaused: boolean;
+  realTimeStart: number;
+  simTimeStart: number;
+  tick(deltaRealMs: number): void;
+  step(deltaSimMs: number): void;
+  pause(): void;
+  resume(): void;
+  setSpeed(newSpeed: number): void;
+  getSimulatedTime(): number;
+  getFormattedTime(): string;
+  reset(initialSimTime?: number, initialSpeed?: number): void;
+}
+
+export class SimulationClock implements ISimulationClock {
   /** Current simulated time in milliseconds */
   public currentTime: number;
   /** Speed multiplier. 0 = pause, 1 = normal, etc. */
   public speed: number;
   public realTimeStart: number;
   public simTimeStart: number;
-  private isPaused: boolean = false;
+  public isPaused: boolean = false;
   private lastRealTime: number;
 
   /**
@@ -23,9 +39,9 @@ export class SimulationClock {
   constructor(initialSimTime: number = 0, initialSpeed: number = 1) {
     this.currentTime = initialSimTime;
     this.speed = initialSpeed;
-    this.realTimeStart = Date.now();
     this.simTimeStart = initialSimTime;
-    this.lastRealTime = this.realTimeStart;
+    this.realTimeStart = 0;
+    this.lastRealTime = 0;
   }
 
   /**
@@ -33,10 +49,19 @@ export class SimulationClock {
    * @param deltaRealMs Real time elapsed since last tick in milliseconds
    */
   public tick(deltaRealMs: number): void {
-    if (this.isPaused || this.speed === 0) return;
+    if (this.isPaused || this.speed === 0 || deltaRealMs <= 0) return;
     const deltaSimMs = deltaRealMs * this.speed * this.SIM_TIME_RATIO;
     this.currentTime += deltaSimMs;
     this.lastRealTime += deltaRealMs;
+  }
+
+  /**
+   * Advances the simulation clock by a discrete simulated time delta.
+   * @param deltaSimMs Simulated time to advance in milliseconds
+   */
+  public step(deltaSimMs: number): void {
+    if (deltaSimMs <= 0) return;
+    this.currentTime += deltaSimMs;
   }
 
   public setSpeed(newSpeed: number): void {
@@ -58,5 +83,14 @@ export class SimulationClock {
   public getFormattedTime(): string {
     const date = new Date(this.currentTime);
     return date.toISOString();
+  }
+
+  public reset(initialSimTime: number = 0, initialSpeed: number = 1): void {
+    this.currentTime = initialSimTime;
+    this.simTimeStart = initialSimTime;
+    this.speed = initialSpeed;
+    this.isPaused = false;
+    this.realTimeStart = 0;
+    this.lastRealTime = 0;
   }
 }

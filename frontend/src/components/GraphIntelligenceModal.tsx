@@ -68,7 +68,7 @@ export function GraphIntelligenceModal({
 
   const modalRef = useRef<HTMLDivElement>(null);
 
-  // Fetch status of Neo4j graph & memory cache
+  // Fetch status of the local simulation relationship graph
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/graph/status');
@@ -224,7 +224,7 @@ export function GraphIntelligenceModal({
                   id="graph-intelligence-title"
                   className="text-base font-bold text-white tracking-wide"
                 >
-                  Neo4j Graph Intelligence & Incident Studio
+                  Simulation Graph & Incident Studio
                 </h3>
                 <Badge variant="purple">PHASE 3</Badge>
               </div>
@@ -240,7 +240,7 @@ export function GraphIntelligenceModal({
                     }`}
                   />
                   <span className="font-mono text-slate-300">
-                    {graphStatus?.healthy ? 'Bolt 7687 Online' : 'Standby / In-Memory'}
+                    {graphStatus?.healthy ? 'Local Graph Ready' : 'Local Graph Unavailable'}
                   </span>
                 </div>
               </div>
@@ -264,7 +264,7 @@ export function GraphIntelligenceModal({
               onClick={handleSyncTopology}
               disabled={syncing}
               className="flex items-center gap-1.5 border-purple-500/40 text-purple-200 hover:bg-purple-950/40"
-              title="Resynchronize simulation state into Neo4j graph"
+              title="Resynchronize the local simulation relationship graph"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
               <span>{syncing ? 'Syncing...' : 'Sync Graph'}</span>
@@ -375,7 +375,7 @@ export function GraphIntelligenceModal({
           <div className="flex items-center space-x-2">
             <Database className="w-3.5 h-3.5 text-purple-400" />
             <span className="font-mono text-[11px] text-slate-400 hidden sm:inline">
-              Architecture: Neo4j (Graph) • Cassandra (Telemetry) • MongoDB (Catalog/Orders)
+              Simulation storage: in-memory graph, telemetry and orders • Marketplace: read-only
             </span>
           </div>
 

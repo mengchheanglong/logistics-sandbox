@@ -3,9 +3,27 @@
  *
  * This client calls the real osm-pathfinder service for route calculations.
  * Vehicle movement follows the actual road geometry returned by the routing engine.
+ * Under P0-05 strict mode, failures reject without synthetic straight-line fallbacks.
  */
 
 import { Coordinate } from '../world/types.js';
+
+export class StrictRoutingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StrictRoutingError';
+  }
+}
+
+export interface GraphProvenance {
+  nodes: number;
+  edges: number;
+  isDemo: boolean;
+  datasetName: string;
+  graphVersion: string;
+  costModelVersion: string;
+  available: boolean;
+}
 
 export interface RouteResult {
   /** Route polyline as [lon, lat] coordinate pairs */
@@ -24,6 +42,14 @@ export interface RouteResult {
   startSnapped?: [number, number];
   /** Snapped end coordinate [lon, lat] */
   endSnapped?: [number, number];
+  /** Whether this route used synthetic/straight-line fallback */
+  isFallback?: boolean;
+  /** Whether the underlying graph is the synthetic demo graph */
+  isDemo?: boolean;
+  /** Pinned road graph version */
+  graphVersion?: string;
+  /** Pinned cost model version */
+  costModelVersion?: string;
 }
 
 export interface RoutingOptions {
@@ -33,15 +59,30 @@ export interface RoutingOptions {
   metric?: string;
   /** Departure time as "HH:MM" for traffic-aware routing */
   departureTime?: string;
+  /** Fleet vehicle profile: car, van, truck, motorcycle */
+  profile?: string;
+  /** If true, prohibits synthetic fallbacks and throws StrictRoutingError on failure */
+  strict?: boolean;
+  /** If true, rejects demo graphs and requires real OSM network */
+  requireRealGraph?: boolean;
 }
 
 export class RoutingClient {
   private baseUrl: string;
   private available: boolean = true;
+  private strictMode: boolean = false;
   private lastHealthCheck: number = 0;
 
   constructor(baseUrl: string = 'http://localhost:3000') {
     this.baseUrl = baseUrl;
+  }
+
+  public setStrictMode(enabled: boolean): void {
+    this.strictMode = enabled;
+  }
+
+  public isStrictMode(): boolean {
+    return this.strictMode;
   }
 
   /**
@@ -53,6 +94,7 @@ export class RoutingClient {
     end: Coordinate,
     options: RoutingOptions = {}
   ): Promise<RouteResult> {
+    const isStrict = options.strict ?? this.strictMode;
     const body = {
       start_lat: start.lat,
       start_lon: start.lon,
@@ -61,6 +103,7 @@ export class RoutingClient {
       algorithm: options.algorithm ?? 'contraction_hierarchies',
       metric: options.metric ?? 'time',
       ...(options.departureTime ? { departure_time: options.departureTime } : {}),
+      ...(options.profile ? { profile: options.profile } : {}),
     };
 
     try {
@@ -75,7 +118,14 @@ export class RoutingClient {
         throw new Error(`Routing API returned ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json() as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
+      const isDemo = Boolean(data.is_demo);
+
+      if (options.requireRealGraph && isDemo) {
+        throw new StrictRoutingError(
+          'Real road graph required for scored simulation, but osm-pathfinder is in demo mode.'
+        );
+      }
 
       return {
         path: data.path as [number, number][],
@@ -86,17 +136,29 @@ export class RoutingClient {
         queryTimeMs: data.query_time_ms as number,
         startSnapped: data.start_snapped as [number, number] | undefined,
         endSnapped: data.end_snapped as [number, number] | undefined,
+        isFallback: false,
+        isDemo,
+        graphVersion: data.graph_version as string | undefined,
+        costModelVersion: data.cost_model_version as string | undefined,
       };
     } catch (err) {
-      if (!this.available) {
-        // Already known to be unavailable, don't spam logs
-      } else {
+      if (err instanceof StrictRoutingError) {
+        throw err;
+      }
+
+      if (isStrict) {
+        throw new StrictRoutingError(
+          `Routing calculation failed in strict mode: ${(err as Error).message}. Synthetic straight-line fallback is prohibited for scored/validated runs.`
+        );
+      }
+
+      if (this.available) {
         console.warn(`[RoutingClient] Route calculation failed: ${(err as Error).message}`);
         console.warn(`[RoutingClient] Is osm-pathfinder running at ${this.baseUrl}?`);
         this.available = false;
       }
 
-      // Fallback: return a direct line (clearly marked as fallback)
+      // Non-strict fallback: return a direct line (clearly marked as fallback)
       const fallbackDistance = haversineDistanceSimple(start, end);
       const fallbackDuration = fallbackDistance / 8.33; // ~30 km/h average
 
@@ -107,6 +169,10 @@ export class RoutingClient {
         algorithm: 'fallback_direct',
         nodesVisited: 0,
         queryTimeMs: 0,
+        isFallback: true,
+        isDemo: true,
+        graphVersion: 'fallback',
+        costModelVersion: 'fallback-haversine',
       };
     }
   }
@@ -133,19 +199,43 @@ export class RoutingClient {
   }
 
   /**
-   * Get road graph statistics from osm-pathfinder.
+   * Get road graph statistics and provenance metadata from osm-pathfinder.
    */
   public async getGraphStats(): Promise<{ nodes: number; edges: number }> {
+    const prov = await this.getProvenance();
+    return { nodes: prov.nodes, edges: prov.edges };
+  }
+
+  /**
+   * Retrieve complete graph provenance from osm-pathfinder.
+   */
+  public async getProvenance(): Promise<GraphProvenance> {
     try {
       const response = await fetch(`${this.baseUrl}/api/graph/stats`, {
         signal: AbortSignal.timeout(2000),
       });
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return (await response.json()) as { nodes: number; edges: number };
-    } catch (err) {
-      console.warn(`[RoutingClient] Failed to get graph stats: ${(err as Error).message}`);
-      return { nodes: 0, edges: 0 };
+      const data = (await response.json()) as Record<string, unknown>;
+      return {
+        nodes: (data.nodes as number) ?? 0,
+        edges: (data.edges as number) ?? 0,
+        isDemo: Boolean(data.is_demo),
+        datasetName: (data.dataset_name as string) ?? 'unknown',
+        graphVersion: (data.graph_version as string) ?? 'unknown',
+        costModelVersion: (data.cost_model_version as string) ?? 'unknown',
+        available: true,
+      };
+    } catch {
+      return {
+        nodes: 0,
+        edges: 0,
+        isDemo: true,
+        datasetName: 'offline-fallback',
+        graphVersion: 'none',
+        costModelVersion: 'none',
+        available: false,
+      };
     }
   }
 

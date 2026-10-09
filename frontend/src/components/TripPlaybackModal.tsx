@@ -36,6 +36,7 @@ export function TripPlaybackModal({
     initialVehicleId || (vehicles[0]?.id ?? 'TRUCK-001')
   );
   const [loading, setLoading] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [tripData, setTripData] = useState<TelemetryPlaybackData | null>(null);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -50,14 +51,21 @@ export function TripPlaybackModal({
     }
   }, [initialVehicleId]);
 
-  // Fetch telemetry from Cassandra API whenever selected vehicle changes or modal opens
+  // Fetch telemetry from local simulation API whenever selected vehicle changes or modal opens
   const fetchTelemetry = useCallback(async (vId: string) => {
     setLoading(true);
+    setLoadError(null);
     setIsPlaying(false);
+    setTripData(null);
+    setCurrentIndex(0);
+    onPlaybackUpdate?.(null, []);
     try {
       const res = await fetch(`/api/telemetry/playback?vehicleId=${encodeURIComponent(vId)}&limit=300`);
+      if (!res.ok) throw new Error('Telemetry history unavailable');
       if (res.ok) {
         const data: TelemetryPlaybackData = await res.json();
+        if (data.schemaVersion !== 1 || data.source !== 'simulated' || data.storage !== 'in-memory' ||
+            data.durable !== false || data.sinkOwner !== 'logistics-sandbox') throw new Error('Invalid telemetry source');
         setTripData(data);
         setCurrentIndex(0);
         if (onPlaybackUpdate && data.pings.length > 0) {
@@ -65,7 +73,7 @@ export function TripPlaybackModal({
         }
       }
     } catch {
-      // Fallback
+      setLoadError('Telemetry history unavailable. No cached trail is shown.');
     } finally {
       setLoading(false);
     }
@@ -162,6 +170,12 @@ export function TripPlaybackModal({
     const geojson = {
       type: 'FeatureCollection',
       properties: {
+        schemaVersion: tripData.schemaVersion,
+        source: tripData.source,
+        simulationId: tripData.simulationId,
+        tenantId: tripData.tenantId,
+        durable: tripData.durable,
+        units: tripData.units,
         vehicleId: selectedVehicleId,
         riderId: tripData.riderId,
         pingsCount: tripData.pings.length,
@@ -175,6 +189,9 @@ export function TripPlaybackModal({
             coordinates,
           },
           properties: {
+            source: tripData.source,
+            simulationId: tripData.simulationId,
+            durable: tripData.durable,
             name: `${selectedVehicleId} Trajectory`,
             durationSeconds: tripData.summary.durationSeconds,
             maxSpeedKmh: tripData.summary.maxSpeedKmh,
@@ -188,6 +205,9 @@ export function TripPlaybackModal({
             coordinates: [p.lon, p.lat],
           },
           properties: {
+            source: tripData.source,
+            simulationId: p.simulation_id,
+            durable: tripData.durable,
             sequence: idx,
             timestamp: p.ping_timestamp,
             speedKmh: p.speed_kmh,
@@ -209,8 +229,10 @@ export function TripPlaybackModal({
 
   const exportCSV = () => {
     if (!tripData || tripData.pings.length === 0) return;
-    const headers = ['sequence', 'rider_id', 'vehicle_id', 'timestamp', 'lat', 'lon', 'speed_kmh', 'battery_level', 'status'];
+    const headers = ['source', 'simulation_id', 'sequence', 'rider_id', 'vehicle_id', 'timestamp', 'lat', 'lon', 'speed_kmh', 'battery_level', 'status'];
     const rows = tripData.pings.map((p, idx) => [
+      tripData.source,
+      p.simulation_id,
       idx,
       p.rider_id,
       selectedVehicleId,
@@ -218,7 +240,7 @@ export function TripPlaybackModal({
       p.lat,
       p.lon,
       (p.speed_kmh || 0).toFixed(1),
-      p.battery_level || 100,
+      p.battery_level ?? 0,
       p.status || 'unknown',
     ]);
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -250,11 +272,11 @@ export function TripPlaybackModal({
               <h3 className="font-bold text-sm text-white tracking-wide flex items-center gap-2">
                 <span>Historical Telemetry Trip Playback</span>
                 <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-500/40 font-semibold">
-                  Cassandra CQL Time-Series
+                  Simulated · volatile memory
                 </span>
               </h3>
               <span className="text-[10px] text-slate-400 block">
-                Time-scrubber querying rider_gps_pings wide-column store
+                Current-run simulated history · lost on process exit
               </span>
             </div>
           </div>
@@ -269,6 +291,7 @@ export function TripPlaybackModal({
 
         {/* Vehicle Selection & Summary Bar */}
         <div className="p-5 space-y-4">
+          {loadError && <p role="alert" className="text-amber-300">{loadError}</p>}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-slate-400 font-mono font-bold">Vehicle:</span>

@@ -9,7 +9,6 @@
  * 5. Multi-factor candidate scoring for predictive order assignment.
  */
 
-import { v4 as uuidv4 } from 'uuid';
 import {
   Coordinate,
   DistrictZone,
@@ -75,6 +74,15 @@ export class PredictiveAiEngine {
   private slaBreachesAvertedCount: number = 0;
   private lastRebalanceSimTime: number = 0;
   private readonly REBALANCE_COOLDOWN_SIM_MS = 60 * 1000; // 1 min sim cooldown between rebalancing directives
+  private actionCounter: number = 0;
+
+  public reset(): void {
+    this.recentRebalances = [];
+    this.totalRebalancesCount = 0;
+    this.slaBreachesAvertedCount = 0;
+    this.lastRebalanceSimTime = 0;
+    this.actionCounter = 0;
+  }
 
   /**
    * Determine which district a coordinate belongs to.
@@ -318,7 +326,8 @@ export class PredictiveAiEngine {
         { algorithm: routingAlgorithm, metric: 'time' }
       );
 
-      const actionId = `REBAL-${uuidv4().substring(0, 8).toUpperCase()}`;
+      this.actionCounter++;
+      const actionId = `REBAL-${String(this.actionCounter).padStart(4, '0')}`;
       const action: AiRebalancingAction = {
         id: actionId,
         simTimestamp: currentSimTime,

@@ -79,6 +79,7 @@ export interface Order {
   deliveryLocation: Coordinate;
   assignedVehicleId: string | null;
   createdAt: number;
+  creationSeq?: number;
   assignedAt: number | null;
   pickedUpAt: number | null;
   deliveredAt: number | null;
@@ -103,10 +104,11 @@ export interface Customer {
 }
 
 export interface SimulationEvent {
+  sequenceNumber: number;
   eventId: string;
   simulationId: string;
   simTimestamp: number;
-  realTimestamp: number;
+  realTimestamp?: number;
   entityType: string;
   entityId: string;
   eventType: string;
@@ -261,6 +263,18 @@ export interface SimulationState {
   predictiveAi?: PredictiveAiMetrics;
   chaosMode?: ChaosMode;
   chaosActiveEventsCount?: number;
+  strictRouting?: boolean;
+  requireRealGraph?: boolean;
+  graphProvenance?: {
+    nodes: number;
+    edges: number;
+    isDemo: boolean;
+    datasetName: string;
+    graphVersion: string;
+    costModelVersion: string;
+    available: boolean;
+  };
+  invalidationReason?: string;
 }
 
 export interface DepotConfig {

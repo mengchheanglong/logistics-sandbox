@@ -5,6 +5,7 @@
  * and self-healing automation.
  */
 
+import { SeededRandom } from '../utils/random.js';
 import type { ChaosMode, ChaosIncidentEvent, Coordinate } from '../world/types.js';
 import type { SimulationEngine } from './engine.js';
 
@@ -78,6 +79,18 @@ export class ChaosEngine {
   private activeEvents: ChaosIncidentEvent[] = [];
   private totalEventsTriggered: number = 0;
   private totalEventsHealed: number = 0;
+  private chaosCounter: number = 0;
+  private rng: SeededRandom = new SeededRandom(1337);
+
+  public reset(seed: number = 1337): void {
+    this.mode = 'off';
+    this.tickCounter = 0;
+    this.activeEvents = [];
+    this.totalEventsTriggered = 0;
+    this.totalEventsHealed = 0;
+    this.chaosCounter = 0;
+    this.rng = new SeededRandom(seed);
+  }
 
   public getMode(): ChaosMode {
     return this.mode;
@@ -133,8 +146,9 @@ export class ChaosEngine {
   }
 
   private triggerRandomChaos(simTime: number, engine: SimulationEngine): void {
-    const template = PHNOM_PENH_CHAOS_TEMPLATES[Math.floor(Math.random() * PHNOM_PENH_CHAOS_TEMPLATES.length)];
-    const eventId = `CHAOS-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const template = this.rng.pick(PHNOM_PENH_CHAOS_TEMPLATES);
+    this.chaosCounter++;
+    const eventId = `CHAOS-${String(this.chaosCounter).padStart(4, '0')}`;
 
     const chaosEvent: ChaosIncidentEvent = {
       id: eventId,
@@ -160,8 +174,8 @@ export class ChaosEngine {
       const enRouteVehicles = engine.world.getAllVehicles().filter((v) => v.status === 'en_route');
       const allVehicles = engine.world.getAllVehicles();
       const target = enRouteVehicles.length > 0
-        ? enRouteVehicles[Math.floor(Math.random() * enRouteVehicles.length)]
-        : (allVehicles.length > 0 ? allVehicles[Math.floor(Math.random() * allVehicles.length)] : null);
+        ? this.rng.pick(enRouteVehicles)
+        : (allVehicles.length > 0 ? this.rng.pick(allVehicles) : null);
 
       if (target) {
         chaosEvent.id = target.id;
@@ -178,7 +192,10 @@ export class ChaosEngine {
       for (let i = 0; i < count; i++) {
         engine.injectCustomOrder({
           customerName: `Chaos Flash Buyer #${i + 1}`,
-          deliveryLocation: { lat: 11.5850 + (Math.random() - 0.5) * 0.02, lon: 104.8820 + (Math.random() - 0.5) * 0.02 },
+          deliveryLocation: {
+            lat: 11.5850 + (this.rng.next() - 0.5) * 0.02,
+            lon: 104.8820 + (this.rng.next() - 0.5) * 0.02,
+          },
           priority: 'express',
           slaDurationMin: 25,
         }).catch(() => {});

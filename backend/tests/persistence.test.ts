@@ -8,8 +8,6 @@ import {
   InMemoryOrderRepository,
   InMemoryVehicleRepository,
   InMemoryScenarioRepository,
-  CassandraTelemetryRepository,
-  MongoOrderRepository,
   createPersistenceLayer,
   TelemetryPing,
 } from '../src/persistence/index.js';
@@ -152,13 +150,10 @@ describe('Phase 3: Persistence Layer & Polyglot NoSQL Adapters', () => {
   });
 
   describe('Persistence Factory', () => {
-    it('creates polyglot persistence layer with composite status', () => {
-      const layer = createPersistenceLayer('polyglot');
-      expect(layer.driverType).toBe('polyglot');
-      const status = layer.getStatus();
-      expect(status.telemetry.driver).toContain('Cassandra');
-      expect(status.orders.driver).toContain('MongoDB');
-      expect(status.vehicles.driver).toContain('in-memory');
+    it('rejects remote persistence drivers', () => {
+      for (const driver of ['polyglot', 'mongodb', 'cassandra', 'unknown']) {
+        expect(() => createPersistenceLayer(driver)).toThrow('remote driver');
+      }
     });
 
     it('supports pure in-memory mode', () => {
@@ -193,14 +188,14 @@ describe('Phase 3: Persistence Layer & Polyglot NoSQL Adapters', () => {
       expect(order.items[0].name).toBe('Angkor Craft Beer 6-Pack');
     });
 
-    it('decrements catalog stock in EcommerceClient', async () => {
-      const client = new EcommerceClient('http://localhost:4000');
-      const initialStock = client.getCatalog().find(c => c.product_id === 'P0874')?.stock ?? 250;
-
-      await client.adjustStock([{ product_id: 'P0874', quantity: 5 }]);
-      const updatedStock = client.getCatalog().find(c => c.product_id === 'P0874')?.stock;
-
-      expect(updatedStock).toBe(initialStock - 5);
+    it('returns independent catalog copies and exposes no write capability', () => {
+      const client = new EcommerceClient();
+      const catalog = client.getCatalog();
+      catalog[0].stock = 0;
+      expect(client.getCatalog()[0].stock).toBeGreaterThan(0);
+      expect(client).not.toHaveProperty('adjustStock');
+      expect(client).not.toHaveProperty('createMarketplaceOrder');
+      expect(client).not.toHaveProperty('sendRiderPing');
     });
 
     it('handles offline fallback gracefully when warehouse is queried', async () => {

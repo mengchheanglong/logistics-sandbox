@@ -288,7 +288,7 @@ export function DispatchOrderModal({
         orderId: data.order?.id,
         assignedVehicleId: data.assignedVehicleId,
         message: data.message,
-        ecommerceSynced: data.ecommerceSynced ?? true,
+        ecommerceSynced: data.ecommerceSynced ?? false,
       });
     } catch (err: any) {
       setError(err?.message || 'Error dispatching order');

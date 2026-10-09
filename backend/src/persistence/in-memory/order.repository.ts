@@ -11,12 +11,12 @@ export class InMemoryOrderRepository implements IOrderRepository {
   private orders: Map<string, Order> = new Map();
 
   public async saveOrder(order: Order): Promise<void> {
-    this.orders.set(order.id, { ...order });
+    this.orders.set(order.id, structuredClone(order));
   }
 
   public async getOrder(orderId: string): Promise<Order | null> {
     const o = this.orders.get(orderId);
-    return o ? { ...o } : null;
+    return o ? structuredClone(o) : null;
   }
 
   public async getAllOrders(filter?: { status?: string; customerId?: string }): Promise<Order[]> {
@@ -27,7 +27,7 @@ export class InMemoryOrderRepository implements IOrderRepository {
     if (filter?.customerId) {
       list = list.filter(o => o.customerId === filter.customerId);
     }
-    return list.map(o => ({ ...o }));
+    return list.map(o => (structuredClone(o)));
   }
 
   public async updateOrderStatus(orderId: string, status: OrderStatus, deliveredAt?: number): Promise<void> {

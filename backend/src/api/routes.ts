@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import { SimulationEngine } from '../simulation/engine.js';
 import { defaultScenario } from '../scenarios/default.js';
+import { SCENARIO_PRESETS } from '../scenarios/presets.js';
 
 export function setupRoutes(engine: SimulationEngine): Router {
   const router = Router();
@@ -45,6 +46,54 @@ export function setupRoutes(engine: SimulationEngine): Router {
   router.post('/simulation/resume', (req, res) => {
     engine.resume();
     res.json({ status: 'resumed', simulationStatus: 'running' });
+  });
+
+  router.post('/simulation/step', (req, res) => {
+    const { steps = 1, deltaSimMs, deltaMs } = req.body || {};
+    const computedDeltaSimMs =
+      typeof deltaSimMs === 'number'
+        ? deltaSimMs
+        : typeof deltaMs === 'number'
+          ? deltaMs * (engine.clock.speed || 1) * 60
+          : undefined;
+    const result = engine.step(Number(steps) || 1, computedDeltaSimMs);
+    res.json({
+      success: true,
+      ...result,
+      status: engine.getStatus(),
+      state: engine.getState(),
+    });
+  });
+
+  router.post('/simulation/reset', (req, res) => {
+    const { scenarioId, seedOrders = false } = req.body || {};
+    const scenario = scenarioId ? SCENARIO_PRESETS[scenarioId] : undefined;
+    const result = engine.reset(scenario, { seedOrders: Boolean(seedOrders) });
+    res.json(result);
+  });
+
+  router.get('/simulation/events/hash', (req, res) => {
+    res.json(engine.getEventSequenceHash());
+  });
+
+  router.post('/simulation/strict-routing', (req, res) => {
+    const { strict = true, requireRealGraph = false } = req.body || {};
+    engine.setStrictRouting(Boolean(strict), Boolean(requireRealGraph));
+    res.json({
+      success: true,
+      strictRouting: engine.isStrictRouting(),
+      requireRealGraph: Boolean(requireRealGraph),
+      status: engine.getStatus(),
+    });
+  });
+
+  router.get('/simulation/provenance', async (req, res) => {
+    const prov = await engine.routingClient.getProvenance();
+    res.json({
+      ...prov,
+      strictRouting: engine.isStrictRouting(),
+      runStatus: engine.getStatus(),
+    });
   });
 
   router.post('/simulation/algorithm', (req, res) => {
@@ -251,9 +300,17 @@ export function setupRoutes(engine: SimulationEngine): Router {
   });
 
   router.get('/telemetry/rider/:riderId', async (req, res) => {
-    const limit = Number(req.query.limit) || 50;
-    const pings = await engine.persistence.telemetry.getRecentPings(req.params.riderId, limit);
+    const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+      res.status(400).json({ error: 'limit must be an integer from 1 to 1000' });
+      return;
+    }
+    const simulationId = engine.getSimulationId();
+    const pings = await engine.persistence.telemetry.getRecentPings(req.params.riderId, limit, simulationId);
     res.json({
+      schemaVersion: 1, source: 'simulated', sourceId: simulationId, simulationId, tenantId: 'demo',
+      storage: 'in-memory', durable: false, sinkOwner: 'logistics-sandbox', status: 'available',
+      units: { coordinates: 'degrees', speed: 'km/h', battery: 'percent', time: 'simulation-ms' },
       riderId: req.params.riderId,
       count: pings.length,
       pings,
@@ -281,14 +338,8 @@ export function setupRoutes(engine: SimulationEngine): Router {
     });
   });
 
-  router.post('/inventory/adjust', async (req, res) => {
-    const { items } = req.body;
-    if (!Array.isArray(items)) {
-      res.status(400).json({ error: 'items array is required' });
-      return;
-    }
-    const ok = await engine.ecommerceClient.adjustStock(items);
-    res.json({ success: ok, itemsAdjusted: items.length });
+  router.post('/inventory/adjust', (_req, res) => {
+    res.status(403).json({ success: false, egressPolicy: 'DISABLED', error: 'Operational inventory writes are disabled in the simulator' });
   });
 
   // Phase 3 Neo4j Relationship Graph & Impact Analysis Endpoints
@@ -316,14 +367,8 @@ export function setupRoutes(engine: SimulationEngine): Router {
     res.json(impact);
   });
 
-  router.post('/graph/query', async (req, res) => {
-    const { cypher, params } = req.body;
-    if (!cypher || typeof cypher !== 'string') {
-      res.status(400).json({ error: 'cypher string is required' });
-      return;
-    }
-    const result = await engine.persistence.relationships.executeCypher(cypher, params || {});
-    res.json(result);
+  router.post('/graph/query', (_req, res) => {
+    res.status(403).json({ success: false, egressPolicy: 'DISABLED', error: 'Remote Cypher execution is disabled in the simulator' });
   });
 
   router.post('/graph/sync', async (req, res) => {
@@ -334,12 +379,12 @@ export function setupRoutes(engine: SimulationEngine): Router {
     );
     res.json({
       success: true,
-      message: 'World topology synchronized to Neo4j relationship graph',
+      message: 'World topology synchronized to local simulation relationship graph',
       status: engine.persistence.relationships.getStatus(),
     });
   });
 
-  // Phase 4: Historical Cassandra Telemetry Time-Series Trip Playback
+  // Volatile simulated telemetry, scoped to the current run.
   router.get('/telemetry/playback', async (req, res) => {
     const riderId = (req.query.riderId as string) || (req.query.vehicleId as string);
     if (!riderId) {
@@ -351,15 +396,24 @@ export function setupRoutes(engine: SimulationEngine): Router {
     const vehicle = engine.world.getVehicle(riderId);
     const targetRiderId = vehicle?.driverId || riderId;
 
-    const limit = Math.min(1000, Number(req.query.limit) || 250);
+    const limit = req.query.limit === undefined ? 250 : Number(req.query.limit);
     const startMs = req.query.startTime ? Number(req.query.startTime) : undefined;
     const endMs = req.query.endTime ? Number(req.query.endTime) : undefined;
 
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000 ||
+        ((startMs === undefined) !== (endMs === undefined)) ||
+        (startMs !== undefined && endMs !== undefined &&
+          (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs))) {
+      res.status(400).json({ error: 'Invalid limit or time range' });
+      return;
+    }
+    const simulationId = engine.getSimulationId();
+
     let pings = [];
     if (startMs !== undefined && endMs !== undefined) {
-      pings = await engine.persistence.telemetry.getPingsByTimeRange(targetRiderId, startMs, endMs);
+      pings = (await engine.persistence.telemetry.getPingsByTimeRange(targetRiderId, startMs, endMs, simulationId)).slice(-limit);
     } else {
-      pings = await engine.persistence.telemetry.getRecentPings(targetRiderId, limit);
+      pings = await engine.persistence.telemetry.getRecentPings(targetRiderId, limit, simulationId);
     }
 
     // Sort chronologically ascending (oldest to newest) for smooth playback progression
@@ -378,14 +432,17 @@ export function setupRoutes(engine: SimulationEngine): Router {
       : 0;
 
     res.json({
+      schemaVersion: 1, source: 'simulated', sourceId: simulationId, simulationId, tenantId: 'demo',
+      storage: 'in-memory', durable: false, sinkOwner: 'logistics-sandbox', status: 'available',
+      units: { coordinates: 'degrees', speed: 'km/h', battery: 'percent', time: 'simulation-ms' },
       riderId: targetRiderId,
       vehicleId: vehicle?.id || null,
       vehicleName: vehicle?.name || targetRiderId,
       count: pings.length,
       pings,
       summary: {
-        startTime: startPing?.ping_timestamp || null,
-        endTime: endPing?.ping_timestamp || null,
+        startTime: startPing?.ping_timestamp ?? null,
+        endTime: endPing?.ping_timestamp ?? null,
         durationSeconds,
         maxSpeedKmh: Number(maxSpeedKmh.toFixed(1)),
         avgSpeedKmh: Number(avgSpeedKmh.toFixed(1)),

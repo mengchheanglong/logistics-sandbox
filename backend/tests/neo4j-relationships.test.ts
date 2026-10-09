@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { Neo4jRelationshipRepository } from '../src/persistence/neo4j/relationship.repository.js';
+import { InMemoryRelationshipRepository } from '../src/persistence/in-memory/relationship.repository.js';
 import { Warehouse, Vehicle, Driver, Order } from '../src/world/types.js';
 
 describe('Phase 3: Neo4j Logistics Relationship Graph & Incident Impact Analysis', () => {
-  let repo: Neo4jRelationshipRepository;
+  let repo: InMemoryRelationshipRepository;
 
   const mockWarehouses: Warehouse[] = [
     {
@@ -59,7 +59,7 @@ describe('Phase 3: Neo4j Logistics Relationship Graph & Incident Impact Analysis
   ];
 
   beforeEach(() => {
-    repo = new Neo4jRelationshipRepository();
+    repo = new InMemoryRelationshipRepository();
   });
 
   it('synchronizes supply chain topology (Warehouses -> Depots -> Vehicles -> Drivers)', async () => {

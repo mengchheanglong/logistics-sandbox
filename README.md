@@ -10,7 +10,41 @@
 
 Logistics Sandbox is a comprehensive, deterministic simulation engine and visualizer designed to model complex supply chain, delivery, and fleet management operations. Focused initially on the Phnom Penh area (Cambodia), it provides a real-time, interactive environment to test routing algorithms, scale infrastructure, and observe intricate logistics behaviors.
 
+## Simulation isolation (Phase 0)
+
+Operational write policy is **DISABLED**. `EcommerceReadClient` reads marketplace
+catalog, pending orders and analytics. Orders, telemetry, vehicle state and relationship
+graphs are written only to local in-memory repositories; data is lost on process exit.
+Order mirroring, upstream delivery updates, stock adjustment and GPS uploads are removed.
+
+`PERSISTENCE_DRIVER` defaults to `in-memory`. Remote/unknown values reject startup;
+Mongo/Cassandra/Neo4j HTTP write adapters and credential defaults are removed.
+Do not provide operational secrets to the simulator. Set `ECOMMERCE_READ_URL` to the
+approved read source (default `http://localhost:4000`). Credential/query/fragment URLs
+are rejected; HTTP(S) reads omit credentials and reject redirects.
+
+`POST /api/inventory/adjust` and `POST /api/graph/query` return 403. Injected orders
+report `ecommerceSynced: false`. Local graph impact analysis and telemetry playback
+remain available. Neither a demo writer nor an audited exporter can be enabled.
+
+Validation from `backend`: `pnpm exec tsc --noEmit` and `pnpm exec vitest run`.
+The isolation regression delivers 500 imported orders over 24 simulated hours against
+mutable mocked upstream state and verifies unchanged orders, inventory and GPS.
+Its routing is a contract fixture, not OSM validation. Container network controls,
+immutable snapshots, deterministic replay and validated routing remain future gates.
+The current clock uses 60 simulated seconds per real second at 1x.
+
 ## ✨ Key Features
+
+### Telemetry source (P0-03)
+
+GPS history is **simulated, in-memory and non-durable**. The engine is its sole producer;
+no marketplace upload or Cassandra sink exists. Playback/history responses identify the
+current run, demo scope, units and storage. Retried pings deduplicate by run/rider/time
+while retained; conflicting retries reject. The default 25,000-row rolling buffer and
+its retry index are lost on process exit. This is capacity retention, not a Cassandra TTL.
+Reads/writes copy records; playback excludes old runs and clears stale trails on failure.
+Local write failures emit telemetry.storage.failed. Determinism remains P0-04 work.
 
 - **🌐 Interactive Digital Twin:** 3D map visualization using MapLibre GL and deck.gl for fleet and facility tracking.
 - **⏱️ Deterministic Simulation Engine:** Configurable tick rates, clock speeds, and deterministic replay capabilities.

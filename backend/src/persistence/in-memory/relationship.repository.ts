@@ -1,19 +1,13 @@
-/**
- * @fileoverview Neo4j Relationship Repository.
- *
- * Implements the Business & Logistics Relationship Graph (Phase 3 architecture):
- * - Graph Schema:
- *     (:Warehouse)-[:FEEDS]->(:Depot)
- *     (:Depot)-[:DISPATCHES]->(:Vehicle)
- *     (:Vehicle)-[:ASSIGNED_TO]->(:Driver)
- *     (:Vehicle)-[:CARRIES]->(:Order)
- *     (:Order)-[:DELIVERS_TO]->(:Customer)
- * - Traversal algorithms for Incident Impact Analysis (Cascade Failure Simulation)
- * - Hybrid non-blocking persistence: fast in-memory graph cache + async Cypher writes
- *   over Neo4j HTTP Bolt Transactional API (Port 7474/7687)
- */
-
-import { Coordinate, Customer, Driver, Order, OrderStatus, Vehicle, Warehouse } from '../../world/types.js';
+/** Local simulation relationship projection. No remote database connection. */
+import {
+  Coordinate,
+  Customer,
+  Driver,
+  Order,
+  OrderStatus,
+  Vehicle,
+  Warehouse,
+} from '../../world/types.js';
 import {
   GraphNode,
   GraphRelationship,
@@ -21,147 +15,26 @@ import {
   IRelationshipRepository,
 } from '../types.js';
 
-export class Neo4jRelationshipRepository implements IRelationshipRepository {
-  private url: string;
-  private authHeader: string;
-  private isConnected: boolean = false;
-  private lastCheckTime: number = 0;
-
-  // In-memory graph cache for sub-millisecond traversal & resilience if Neo4j is offline
+export class InMemoryRelationshipRepository implements IRelationshipRepository {
   private nodes: Map<string, GraphNode> = new Map();
   private relationships: Map<string, GraphRelationship> = new Map();
 
-  // Async write queue to prevent blocking simulation ticks
-  private writeQueue: string[] = [];
-  private isFlushing: boolean = false;
-
-  constructor(
-    url: string = process.env.NEO4J_HTTP_URL || 'http://localhost:7474',
-    user: string = process.env.NEO4J_USER || 'neo4j',
-    pass: string = process.env.NEO4J_PASSWORD || 'marketplace2026'
-  ) {
-    this.url = url.replace(/\/+$/, '');
-    this.authHeader = `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
-
-    // Initial connection check & queue worker
-    this.checkHealth().catch(() => {});
-    setInterval(() => this.flushQueue(), 1000);
+  public async executeCypher(
+    _cypher: string,
+    _params: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    return {
+      results: [],
+      errors: [
+        { message: 'Remote Cypher execution is disabled in the simulator' },
+      ],
+    };
   }
 
-  /**
-   * Health check against Neo4j HTTP API.
-   */
-  public async checkHealth(): Promise<boolean> {
-    try {
-      const res = await fetch(`${this.url}/db/neo4j/tx/commit`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: this.authHeader,
-        },
-        body: JSON.stringify({
-          statements: [{ statement: 'RETURN 1 AS ping' }],
-        }),
-        signal: AbortSignal.timeout(2000),
-      });
-
-      this.isConnected = res.ok;
-      this.lastCheckTime = Date.now();
-      return this.isConnected;
-    } catch {
-      this.isConnected = false;
-      this.lastCheckTime = Date.now();
-      return false;
-    }
-  }
-
-  /**
-   * Execute raw Cypher statements against Neo4j.
-   */
-  public async executeCypher(cypher: string, params: Record<string, any> = {}): Promise<any> {
-    if (!this.isConnected && Date.now() - this.lastCheckTime > 5000) {
-      await this.checkHealth();
-    }
-
-    if (!this.isConnected) {
-      return { results: [], errors: [{ message: 'Neo4j is currently unreachable' }] };
-    }
-
-    try {
-      const res = await fetch(`${this.url}/db/neo4j/tx/commit`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: this.authHeader,
-        },
-        body: JSON.stringify({
-          statements: [{ statement: cypher, parameters: params }],
-        }),
-        signal: AbortSignal.timeout(4000),
-      });
-
-      if (!res.ok) {
-        throw new Error(`Neo4j HTTP Error ${res.status}: ${res.statusText}`);
-      }
-
-      return await res.json();
-    } catch (err) {
-      console.warn(`[Neo4jRelationshipRepository] Cypher execution error: ${(err as Error).message}`);
-      return { results: [], errors: [{ message: (err as Error).message }] };
-    }
-  }
-
-  /**
-   * Enqueue a Cypher write statement to be flushed asynchronously.
-   */
-  private queueStatement(stmt: string): void {
-    this.writeQueue.push(stmt);
-    if (this.writeQueue.length >= 25) {
-      this.flushQueue().catch(() => {});
-    }
-  }
-
-  private async flushQueue(): Promise<void> {
-    if (this.isFlushing || this.writeQueue.length === 0) return;
-    this.isFlushing = true;
-
-    const batch = this.writeQueue.splice(0, 50);
-    try {
-      if (!this.isConnected) {
-        await this.checkHealth();
-      }
-
-      if (this.isConnected) {
-        await fetch(`${this.url}/db/neo4j/tx/commit`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: this.authHeader,
-          },
-          body: JSON.stringify({
-            statements: batch.map((s) => ({ statement: s })),
-          }),
-          signal: AbortSignal.timeout(5000),
-        });
-      }
-    } catch (err) {
-      // Re-queue remaining statements if transient failure
-      if (this.writeQueue.length < 200) {
-        this.writeQueue.push(...batch);
-      }
-    } finally {
-      this.isFlushing = false;
-    }
-  }
-
-  /**
-   * Synchronize the static supply chain topology:
-   * Warehouses, Depots, Vehicles, and assigned Drivers.
-   */
   public async syncTopology(
     warehouses: Warehouse[],
     vehicles: Vehicle[],
-    drivers: Driver[]
+    drivers: Driver[],
   ): Promise<void> {
     // 1. Update in-memory graph
     for (const w of warehouses) {
@@ -235,7 +108,8 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
     }
 
     // Connect Primary Warehouse to Regional Depots
-    const centralWarehouse = warehouses.find((w) => w.type === 'warehouse') || warehouses[0];
+    const centralWarehouse =
+      warehouses.find((w) => w.type === 'warehouse') || warehouses[0];
     if (centralWarehouse) {
       for (const d of warehouses.filter((w) => w.type === 'depot')) {
         const edgeId = `rel_${centralWarehouse.id}_feeds_${d.id}`;
@@ -247,82 +121,16 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
         });
       }
     }
-
-    // 2. Generate and queue Cypher MERGE batch for Neo4j
-    const cypherBatch: string[] = [];
-
-    // Warehouses & Depots
-    for (const w of warehouses) {
-      const label = w.type === 'warehouse' ? 'Warehouse' : 'Depot';
-      cypherBatch.push(`
-        MERGE (n:${label} {id: '${w.id}'})
-        SET n.name = '${w.name.replace(/'/g, "\\'")}',
-            n.type = '${w.type}',
-            n.capacity = ${w.capacity},
-            n.currentStock = ${w.currentStock},
-            n.lat = ${w.position.lat},
-            n.lon = ${w.position.lon},
-            n.status = '${w.status || 'open'}'
-      `);
-    }
-
-    // Warehouse -> FEEDS -> Depot
-    if (centralWarehouse) {
-      for (const d of warehouses.filter((w) => w.type === 'depot')) {
-        cypherBatch.push(`
-          MATCH (w:Warehouse {id: '${centralWarehouse.id}'}), (d:Depot {id: '${d.id}'})
-          MERGE (w)-[:FEEDS]->(d)
-        `);
-      }
-    }
-
-    // Drivers
-    for (const drv of drivers) {
-      cypherBatch.push(`
-        MERGE (d:Driver {id: '${drv.id}'})
-        SET d.name = '${drv.name.replace(/'/g, "\\'")}',
-            d.status = '${drv.status}'
-      `);
-    }
-
-    // Vehicles + DISPATCHES + ASSIGNED_TO
-    for (const v of vehicles) {
-      cypherBatch.push(`
-        MERGE (v:Vehicle {id: '${v.id}'})
-        SET v.name = '${v.name}',
-            v.type = '${v.type}',
-            v.status = '${v.status}',
-            v.capacity_kg = ${v.capacity_kg},
-            v.currentLoad_kg = ${v.currentLoad_kg},
-            v.speed_kmh = ${v.speed_kmh},
-            v.lat = ${v.position.lat},
-            v.lon = ${v.position.lon}
-      `);
-
-      if (v.depotId) {
-        cypherBatch.push(`
-          MATCH (d:Depot {id: '${v.depotId}'}), (v:Vehicle {id: '${v.id}'})
-          MERGE (d)-[:DISPATCHES]->(v)
-        `);
-      }
-
-      if (v.driverId) {
-        cypherBatch.push(`
-          MATCH (v:Vehicle {id: '${v.id}'}), (drv:Driver {id: '${v.driverId}'})
-          MERGE (v)-[:ASSIGNED_TO]->(drv)
-        `);
-      }
-    }
-
-    for (const stmt of cypherBatch) {
-      this.queueStatement(stmt);
-    }
   }
 
   /**
    * Synchronize an Order and Customer, linking Vehicle -> CARRIES -> Order -> DELIVERS_TO -> Customer.
    */
-  public async syncOrder(order: Order, vehicleId?: string | null, customer?: Customer): Promise<void> {
+  public async syncOrder(
+    order: Order,
+    vehicleId?: string | null,
+    customer?: Customer,
+  ): Promise<void> {
     // 1. In-memory graph update
     this.nodes.set(order.id, {
       id: order.id,
@@ -343,7 +151,9 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
     });
 
     const custId = customer?.id || order.customerId || 'C0457';
-    const custName = customer?.name || (custId === 'C0457' ? 'Sokha Meas' : `Customer ${custId}`);
+    const custName =
+      customer?.name ||
+      (custId === 'C0457' ? 'Sokha Meas' : `Customer ${custId}`);
     this.nodes.set(custId, {
       id: custId,
       label: 'Customer',
@@ -375,32 +185,15 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
         to: order.id,
       });
     }
-
-    // 2. Queue Cypher write
-    this.queueStatement(`
-      MERGE (o:Order {id: '${order.id}'})
-      SET o.status = '${order.status}',
-          o.priority = '${order.priority || 'standard'}',
-          o.totalWeight_kg = ${order.totalWeight_kg},
-          o.deliveryLat = ${order.deliveryLocation.lat},
-          o.deliveryLon = ${order.deliveryLocation.lon}
-      MERGE (c:Customer {id: '${custId}'})
-      ON CREATE SET c.name = '${custName.replace(/'/g, "\\'")}'
-      MERGE (o)-[:DELIVERS_TO]->(c)
-    `);
-
-    if (assignedVid) {
-      this.queueStatement(`
-        MATCH (v:Vehicle {id: '${assignedVid}'}), (o:Order {id: '${order.id}'})
-        MERGE (v)-[:CARRIES]->(o)
-      `);
-    }
   }
 
   /**
    * Update lifecycle status of an order node.
    */
-  public async updateOrderStatus(orderId: string, status: OrderStatus): Promise<void> {
+  public async updateOrderStatus(
+    orderId: string,
+    status: OrderStatus,
+  ): Promise<void> {
     const node = this.nodes.get(orderId);
     if (node) {
       node.properties.status = status;
@@ -414,21 +207,16 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
         }
       }
     }
-
-    this.queueStatement(`
-      MATCH (o:Order {id: '${orderId}'})
-      SET o.status = '${status}'
-      WITH o
-      WHERE '${status}' IN ['delivered', 'cancelled']
-      OPTIONAL MATCH (v:Vehicle)-[r:CARRIES]->(o)
-      DELETE r
-    `);
   }
 
   /**
    * Update vehicle live status and coordinates in graph.
    */
-  public async updateVehicleStatus(vehicleId: string, status: string, pos?: Coordinate): Promise<void> {
+  public async updateVehicleStatus(
+    vehicleId: string,
+    status: string,
+    pos?: Coordinate,
+  ): Promise<void> {
     const node = this.nodes.get(vehicleId);
     if (node) {
       node.properties.status = status;
@@ -437,12 +225,6 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
         node.properties.lon = pos.lon;
       }
     }
-
-    this.queueStatement(`
-      MATCH (v:Vehicle {id: '${vehicleId}'})
-      SET v.status = '${status}'
-      ${pos ? `, v.lat = ${pos.lat}, v.lon = ${pos.lon}` : ''}
-    `);
   }
 
   /**
@@ -451,7 +233,7 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
    */
   public async getImpactAnalysis(
     entityType: 'depot' | 'vehicle' | 'warehouse',
-    entityId: string
+    entityId: string,
   ): Promise<ImpactAnalysisResult> {
     const startMs = performance.now();
 
@@ -514,7 +296,11 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
     let totalPayloadKg = 0;
     for (const oId of orderIds) {
       const oNode = this.nodes.get(oId);
-      if (oNode && oNode.properties.status !== 'delivered' && oNode.properties.status !== 'cancelled') {
+      if (
+        oNode &&
+        oNode.properties.status !== 'delivered' &&
+        oNode.properties.status !== 'cancelled'
+      ) {
         const weight = oNode.properties.totalWeight_kg || 1.5;
         totalPayloadKg += weight;
         impactedOrders.push({
@@ -541,7 +327,8 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
       }
     }
 
-    const traversalTimeMs = Math.round((performance.now() - startMs) * 100) / 100;
+    const traversalTimeMs =
+      Math.round((performance.now() - startMs) * 100) / 100;
     const cypherQuery =
       entityType === 'vehicle'
         ? `MATCH (v:Vehicle {id: '${entityId}'})-[c:CARRIES]->(o:Order)-[:DELIVERS_TO]->(cust:Customer) WHERE o.status IN ['assigned', 'picked_up', 'in_transit'] RETURN v, o, cust`
@@ -559,7 +346,8 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
       impactedCustomers,
       totalOrdersAtRisk: impactedOrders.length,
       totalPayloadKg: Math.round(totalPayloadKg * 10) / 10,
-      estimatedRevenueAtRiskUSD: Math.round(impactedOrders.length * 35.5 * 100) / 100,
+      estimatedRevenueAtRiskUSD:
+        Math.round(impactedOrders.length * 35.5 * 100) / 100,
       traversalTimeMs,
       cypherQuery,
     };
@@ -568,7 +356,10 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
   /**
    * Retrieve complete graph topology (all nodes and relationships).
    */
-  public async getGraphTopology(): Promise<{ nodes: GraphNode[]; relationships: GraphRelationship[] }> {
+  public async getGraphTopology(): Promise<{
+    nodes: GraphNode[];
+    relationships: GraphRelationship[];
+  }> {
     return {
       nodes: Array.from(this.nodes.values()),
       relationships: Array.from(this.relationships.values()),
@@ -586,11 +377,11 @@ export class Neo4jRelationshipRepository implements IRelationshipRepository {
     url: string;
   } {
     return {
-      driver: 'Neo4j Graph Database (Bolt / HTTP Transactional API)',
-      healthy: this.isConnected,
+      driver: 'in-memory relationship graph',
+      healthy: true,
       nodeCount: this.nodes.size,
       relationshipCount: this.relationships.size,
-      url: this.url,
+      url: '',
     };
   }
 }

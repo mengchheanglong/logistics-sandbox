@@ -34,11 +34,40 @@ export interface TelemetryPing {
   simulation_id: string;
 }
 
+export interface TelemetryAcknowledgement {
+  schemaVersion: 1;
+  stored: true;
+  replayed: boolean;
+  durable: false;
+  source: 'simulated';
+  sinkOwner: 'logistics-sandbox';
+  storage: 'in-memory';
+  simulationId: string;
+  sourceId: string;
+  tenantId: 'demo';
+  units: { coordinates: 'degrees'; speed: 'km/h'; battery: 'percent'; time: 'simulation-ms' };
+}
+
+export interface TelemetryRepositoryStatus {
+  driver: string;
+  healthy: boolean;
+  pingCount: number;
+  schemaVersion: 1;
+  source: 'simulated';
+  tenantId: 'demo';
+  sinkOwner: 'logistics-sandbox';
+  storage: 'in-memory';
+  durable: false;
+  capacity: number;
+  retryScope: 'retained-history';
+  retention: 'capacity-or-process-exit';
+}
+
 export interface ITelemetryRepository {
   /**
    * Append a single telemetry ping to the time-series store.
    */
-  savePing(ping: TelemetryPing): Promise<void>;
+  savePing(ping: TelemetryPing): Promise<TelemetryAcknowledgement>;
 
   /**
    * Batch append telemetry pings.
@@ -48,12 +77,12 @@ export interface ITelemetryRepository {
   /**
    * Retrieve recent GPS breadcrumb trail for a rider/vehicle (most recent first).
    */
-  getRecentPings(riderId: string, limit?: number): Promise<TelemetryPing[]>;
+  getRecentPings(riderId: string, limit?: number, simulationId?: string): Promise<TelemetryPing[]>;
 
   /**
    * Retrieve GPS points within a time window for trip playback.
    */
-  getPingsByTimeRange(riderId: string, startMs: number, endMs: number): Promise<TelemetryPing[]>;
+  getPingsByTimeRange(riderId: string, startMs: number, endMs: number, simulationId?: string): Promise<TelemetryPing[]>;
 
   /**
    * Total recorded pings in the repository.
@@ -63,7 +92,7 @@ export interface ITelemetryRepository {
   /**
    * Driver name and health status.
    */
-  getStatus(): { driver: string; healthy: boolean; pingCount: number };
+  getStatus(): TelemetryRepositoryStatus;
 }
 
 export interface IOrderRepository {
@@ -170,7 +199,7 @@ export interface IPersistenceLayer {
   driverType: 'in-memory' | 'cassandra' | 'mongodb' | 'polyglot';
   getStatus(): {
     driverType: string;
-    telemetry: { driver: string; healthy: boolean; pingCount: number };
+    telemetry: TelemetryRepositoryStatus;
     orders: { driver: string; healthy: boolean; orderCount: number };
     vehicles: { driver: string; healthy: boolean; vehicleCount: number };
     scenarios: { driver: string; healthy: boolean; count: number };
