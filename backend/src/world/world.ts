@@ -366,6 +366,14 @@ export class World {
     return Array.from(this.warehouses.values());
   }
 
+  public getWarehouse(id: string): Warehouse | undefined {
+    return this.warehouses.get(id);
+  }
+
+  public addWarehouse(warehouse: Warehouse): void {
+    this.warehouses.set(warehouse.id, warehouse);
+  }
+
   public getDriver(id: string): Driver | undefined {
     return this.drivers.get(id);
   }

@@ -276,6 +276,43 @@ export function setupRoutes(engine: SimulationEngine): Router {
     });
   });
 
+  // Supply Chain Platform Operations Fulfillment Bridge status
+  router.get('/integrations/operational/status', async (req, res) => {
+    const isAvailable = await engine.operationalPlatformClient.checkHealth();
+    res.json({
+      status: isAvailable ? 'connected' : 'unavailable',
+      bridge: engine.operationalPlatformClient.getStatus(),
+    });
+  });
+
+  // Pull pending fulfillment orders from supply-chain-platform
+  router.get('/integrations/operational/sync', async (req, res) => {
+    const isAvailable = await engine.operationalPlatformClient.checkHealth();
+    if (!isAvailable) {
+      res.status(503).json({
+        status: 'unavailable',
+        message: 'supply-chain-platform is not responding on port 3100',
+        bridge: engine.operationalPlatformClient.getStatus(),
+      });
+      return;
+    }
+
+    const pendingOrders = await engine.operationalPlatformClient.fetchPendingOrders();
+    let count = 0;
+    for (const opOrder of pendingOrders) {
+      if (!engine.world.getOrder(opOrder.order_id)) {
+        engine.ingestEcommerceOrder(opOrder);
+        count++;
+      }
+    }
+
+    res.json({
+      status: 'synced',
+      ordersIngested: count,
+      bridge: engine.operationalPlatformClient.getStatus(),
+    });
+  });
+
   // Apache Hive 3.1 Big Data OLAP Warehouse Analytics (Cold Path)
   router.get('/integrations/ecommerce/warehouse', async (req, res) => {
     const analytics = await engine.ecommerceClient.fetchWarehouseAnalytics();

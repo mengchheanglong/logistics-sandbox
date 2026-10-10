@@ -100,6 +100,26 @@ export const SCENARIO_PRESETS: Record<string, ScenarioConfig> = {
       },
     ],
   },
+
+  cambodia_network: {
+    id: 'cambodia_network',
+    name: 'Cambodia Operational Fulfillment Network',
+    description: 'Unified 4-depot operational supply chain network across Cambodia (Phnom Penh, Siem Reap, Sihanoukville, Battambang).',
+    seed: 42,
+    city: 'Cambodia National Network',
+    bounds: { north: 13.50, south: 10.50, east: 105.00, west: 103.00 },
+    vehicleCount: 40,
+    orderCount: 200,
+    depots: [
+      { id: 'DC-PNH-01', name: 'Phnom Penh Central Fulfillment Hub', position: { lat: 11.5564, lon: 104.9282 } },
+      { id: 'DC-REP-01', name: 'Siem Reap Regional Depot', position: { lat: 13.3671, lon: 103.8448 } },
+      { id: 'DC-KOS-01', name: 'Sihanoukville Coastal Cross-Dock', position: { lat: 10.6253, lon: 103.5234 } },
+      { id: 'DC-BAT-01', name: 'Battambang Distribution Center', position: { lat: 13.0957, lon: 103.2022 } },
+    ],
+    duration_hours: 8,
+    trafficEnabled: false,
+    incidents: [],
+  },
 };
 
 export const defaultScenario = SCENARIO_PRESETS.morning_delivery;

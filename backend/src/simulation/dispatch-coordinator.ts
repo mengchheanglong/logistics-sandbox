@@ -157,7 +157,7 @@ export class DispatchCoordinator {
           vehicle.routeGeometry = result.route.path;
           vehicle.routeProgress = 0;
           vehicle.routeDistanceM = result.route.distanceM;
-          vehicle.routeDurationS = Math.max(result.route.durationS, 3600);
+          vehicle.routeDurationS = result.route.durationS > 0 ? result.route.durationS : 60;
           vehicle.currentRouteId = `R-${order.id}`;
           vehicle.currentLoad_kg = order.totalWeight_kg;
           vehicle.trailHistory = [

@@ -95,6 +95,10 @@ export interface HiveQueryResult {
 }
 
 export const FALLBACK_CAMBODIA_CATALOG: EcommerceProduct[] = [
+  { product_id: 'SKU-FOOD-01', name: 'Organic Jasmine Rice 25kg Bag', category: 'Food & Groceries', price: 28.0, stock: 1000, weight_kg: 25.0 },
+  { product_id: 'SKU-ELEC-01', name: 'Solar Inverter Battery 5kWh', category: 'Electronics', price: 450.0, stock: 200, weight_kg: 42.0 },
+  { product_id: 'SKU-COLD-01', name: 'Temperature-Controlled Vaccine Vial', category: 'Medical & Cold Chain', price: 35.0, stock: 300, weight_kg: 0.5 },
+  { product_id: 'SKU-MED-01', name: 'Emergency First Aid Kit (Type A)', category: 'Medical & Cold Chain', price: 22.0, stock: 500, weight_kg: 2.0 },
   { product_id: 'P0874', name: 'Battambang Jasmine Fragrant Rice 5kg', category: 'Food & Groceries', price: 4.8, stock: 250, weight_kg: 5.0 },
   { product_id: 'P0875', name: 'Kampot Organic Black Pepper 250g', category: 'Food & Groceries', price: 7.5, stock: 140, weight_kg: 0.25 },
   { product_id: 'P0876', name: 'Mondulkiri Dark Roast Arabica Beans 500g', category: 'Food & Groceries', price: 9.2, stock: 95, weight_kg: 0.5 },
@@ -208,6 +212,11 @@ export class EcommerceReadClient {
 
   private estimateWeight(p: any): number {
     const name = (p.name || '').toLowerCase();
+    const pid = (p.product_id || '').toUpperCase();
+    if (pid === 'SKU-FOOD-01' || name.includes('25kg')) return 25.0;
+    if (pid === 'SKU-ELEC-01' || name.includes('solar') || name.includes('inverter') || name.includes('5kwh')) return 42.0;
+    if (pid === 'SKU-COLD-01' || name.includes('vaccine') || name.includes('vial')) return 0.5;
+    if (pid === 'SKU-MED-01' || name.includes('first aid') || name.includes('kit')) return 2.0;
     if (name.includes('rice') || name.includes('5kg')) return 5.0;
     if (name.includes('monitor')) return 7.5;
     if (name.includes('drone')) return 1.2;

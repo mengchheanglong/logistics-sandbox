@@ -96,6 +96,45 @@ export interface Warehouse {
   status?: 'open' | 'closed';
 }
 
+export const OPERATIONAL_FACILITIES: Warehouse[] = [
+  {
+    id: 'DC-PNH-01',
+    name: 'Phnom Penh Central Fulfillment Hub',
+    position: { lat: 11.5564, lon: 104.9282 },
+    capacity: 20000,
+    currentStock: 10000,
+    type: 'warehouse',
+    status: 'open',
+  },
+  {
+    id: 'DC-REP-01',
+    name: 'Siem Reap Regional Depot',
+    position: { lat: 13.3671, lon: 103.8448 },
+    capacity: 10000,
+    currentStock: 5000,
+    type: 'depot',
+    status: 'open',
+  },
+  {
+    id: 'DC-KOS-01',
+    name: 'Sihanoukville Coastal Cross-Dock',
+    position: { lat: 10.6253, lon: 103.5234 },
+    capacity: 15000,
+    currentStock: 7500,
+    type: 'warehouse',
+    status: 'open',
+  },
+  {
+    id: 'DC-BAT-01',
+    name: 'Battambang Distribution Center',
+    position: { lat: 13.0957, lon: 103.2022 },
+    capacity: 10000,
+    currentStock: 5000,
+    type: 'depot',
+    status: 'open',
+  },
+];
+
 export interface Customer {
   id: string;
   name: string;

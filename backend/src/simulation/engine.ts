@@ -29,6 +29,7 @@ import { PredictiveAiEngine } from '../dispatch/predictive-ai.js';
 import { ChaosEngine } from './chaos-engine.js';
 import { RoutingClient, GraphProvenance } from '../routing/client.js';
 import { EcommerceReadClient, EcommerceOrder, MarketplaceReadAdapter } from '../integrations/ecommerce.js';
+import { OperationalPlatformReadClient } from '../integrations/operational-platform.js';
 import { createPersistenceLayer, IPersistenceLayer } from '../persistence/index.js';
 import { SCENARIO_PRESETS, defaultScenario } from '../scenarios/presets.js';
 import {
@@ -64,6 +65,7 @@ export class SimulationEngine {
   public vrpSolver: VrpTourSolver;
   public routingClient: RoutingClient;
   public ecommerceClient: MarketplaceReadAdapter;
+  public operationalPlatformClient: OperationalPlatformReadClient;
   public persistence: IPersistenceLayer;
   public predictiveAiEngine: PredictiveAiEngine;
   public chaosEngine: ChaosEngine = new ChaosEngine();
@@ -107,15 +109,26 @@ export class SimulationEngine {
   private runInvalidated: boolean = false;
   private invalidationReason?: string;
   private cachedProvenance?: GraphProvenance;
+  private operationalPlatformUrlConfigured: boolean = false;
 
-  constructor(options: { ecommerceReadUrl?: string; strictRouting?: boolean; requireRealGraph?: boolean } = {}) {
-    this.simulationId = `sim-${defaultScenario.id}-${defaultScenario.seed}`;
+  constructor(options: {
+    scenarioId?: string;
+    scenario?: ScenarioConfig;
+    ecommerceReadUrl?: string;
+    operationalPlatformUrl?: string;
+    routingUrl?: string;
+    strictRouting?: boolean;
+    requireRealGraph?: boolean;
+  } = {}) {
+    const scenario = options.scenario || (options.scenarioId ? SCENARIO_PRESETS[options.scenarioId] : undefined) || defaultScenario;
+    this.activeScenarioId = scenario.id || 'morning_delivery';
+    this.simulationId = `sim-${this.activeScenarioId}-${scenario.seed}`;
     this.clock = new SimulationClock();
     this.eventBus = new EventBus();
-    this.world = new World(defaultScenario);
+    this.world = new World(scenario);
     this.dispatcher = new Dispatcher();
     this.vrpSolver = new VrpTourSolver();
-    this.routingClient = new RoutingClient();
+    this.routingClient = new RoutingClient(options.routingUrl ?? process.env.ROUTING_SERVICE_URL ?? 'http://localhost:3000');
 
     if (options.strictRouting) {
       this.strictRouting = true;
@@ -126,12 +139,15 @@ export class SimulationEngine {
     }
 
     this.ecommerceClient = new EcommerceReadClient(options.ecommerceReadUrl ?? process.env.ECOMMERCE_READ_URL);
+    const opUrl = options.operationalPlatformUrl ?? process.env.OPERATIONAL_PLATFORM_URL;
+    this.operationalPlatformClient = new OperationalPlatformReadClient(opUrl ?? 'http://127.0.0.1:3100');
+    this.operationalPlatformUrlConfigured = Boolean(opUrl);
     this.persistence = createPersistenceLayer();
     this.predictiveAiEngine = new PredictiveAiEngine();
 
     // Initialize subsystems
     this.incidentManager = new IncidentManager();
-    this.orderPipeline = new OrderPipeline(defaultScenario.orderCount, defaultScenario.duration_hours);
+    this.orderPipeline = new OrderPipeline(scenario.orderCount, scenario.duration_hours);
     this.fleetAdvancer = new FleetAdvancer({
       routingClient: this.routingClient,
       persistence: this.persistence,
@@ -583,15 +599,32 @@ export class SimulationEngine {
   private async pollEcommerceOrders(): Promise<void> {
     try {
       const isUp = await this.ecommerceClient.checkHealth();
-      if (!isUp) return;
-      const pendingOrders = await this.ecommerceClient.fetchPendingOrders();
-      for (const eOrder of pendingOrders) {
-        if (!this.world.getOrder(eOrder.order_id)) {
-          this.ingestEcommerceOrder(eOrder);
+      if (isUp) {
+        const pendingOrders = await this.ecommerceClient.fetchPendingOrders();
+        for (const eOrder of pendingOrders) {
+          if (!this.world.getOrder(eOrder.order_id)) {
+            this.ingestEcommerceOrder(eOrder);
+          }
         }
       }
     } catch {
       // Non-blocking background sync error
+    }
+
+    if (this.operationalPlatformUrlConfigured) {
+      try {
+        const isPlatformUp = await this.operationalPlatformClient.checkHealth();
+        if (isPlatformUp) {
+          const opOrders = await this.operationalPlatformClient.fetchPendingOrders();
+          for (const opOrder of opOrders) {
+            if (!this.world.getOrder(opOrder.order_id)) {
+              this.ingestEcommerceOrder(opOrder);
+            }
+          }
+        }
+      } catch {
+        // Non-blocking background sync error
+      }
     }
   }
 

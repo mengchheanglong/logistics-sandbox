@@ -1,7 +1,7 @@
-import { Coordinate, Order, OrderPriority } from '../world/types.js';
+import { Coordinate, Order, OrderPriority, OPERATIONAL_FACILITIES } from '../world/types.js';
 import { World } from '../world/world.js';
 import { IPersistenceLayer } from '../persistence/index.js';
-import { EcommerceOrder, MarketplaceReadAdapter } from '../integrations/ecommerce.js';
+import { EcommerceOrder, MarketplaceReadAdapter, FALLBACK_CAMBODIA_CATALOG } from '../integrations/ecommerce.js';
 import { randomPointInBounds } from '../utils/geo.js';
 
 export class OrderPipeline {
@@ -67,7 +67,10 @@ export class OrderPipeline {
     });
   }
 
-  public resolveDeliveryLocation(world: World, address?: string): Coordinate {
+  public resolveDeliveryLocation(world: World, address?: string, explicitCoords?: Coordinate): Coordinate {
+    if (explicitCoords && typeof explicitCoords.lat === 'number' && typeof explicitCoords.lon === 'number') {
+      return explicitCoords;
+    }
     const addr = (address || '').toLowerCase();
     if (addr.includes('boeung tumpun') || addr.includes('meanchey') || addr.includes('271')) {
       return { lat: 11.5305, lon: 104.9085 };
@@ -143,10 +146,61 @@ export class OrderPipeline {
     const existing = world.getOrder(eOrder.order_id);
     if (existing) return existing;
 
-    const depots = world.getAllWarehouses();
-    const depot = depots.length > 0 ? depots[0] : { position: { lat: 11.568, lon: 104.922 } };
-    const deliveryLocation = this.resolveDeliveryLocation(world, eOrder.delivery_address);
-    const totalWeight = (eOrder.items || []).reduce((acc, item) => acc + (item.quantity || 1) * 2, 5);
+    // Resolve facility depot: check order's pickup location, facility_id, province, or world depots
+    let depot: { position: Coordinate; id?: string; name?: string } | undefined;
+    const rawOrder = eOrder as any;
+
+    if (rawOrder.pickup_location || rawOrder.pickupLocation) {
+      const pos = rawOrder.pickup_location || rawOrder.pickupLocation;
+      depot = { position: pos, id: rawOrder.facility_id || 'depot-operational', name: 'Operational Facility' };
+    } else if (rawOrder.facility_id) {
+      depot = world.getWarehouse(rawOrder.facility_id) || OPERATIONAL_FACILITIES.find((f) => f.id === rawOrder.facility_id);
+    } else if (eOrder.province) {
+      const prov = eOrder.province.toLowerCase();
+      if (prov.includes('siem reap')) {
+        depot = world.getWarehouse('DC-REP-01') || OPERATIONAL_FACILITIES.find((f) => f.id === 'DC-REP-01');
+      } else if (prov.includes('sihanouk') || prov.includes('coastal') || prov.includes('kampot')) {
+        depot = world.getWarehouse('DC-KOS-01') || OPERATIONAL_FACILITIES.find((f) => f.id === 'DC-KOS-01');
+      } else if (prov.includes('battambang')) {
+        depot = world.getWarehouse('DC-BAT-01') || OPERATIONAL_FACILITIES.find((f) => f.id === 'DC-BAT-01');
+      } else if (prov.includes('phnom penh') || prov.includes('kandal')) {
+        depot = world.getWarehouse('DC-PNH-01') || OPERATIONAL_FACILITIES.find((f) => f.id === 'DC-PNH-01');
+      }
+    }
+
+    if (!depot) {
+      const depots = world.getAllWarehouses();
+      depot = depots.length > 0 ? depots[0] : OPERATIONAL_FACILITIES[0];
+    }
+
+    // Ensure operational facility exists in world if needed
+    if (depot && depot.id && !world.getWarehouse(depot.id)) {
+      const opFacility = OPERATIONAL_FACILITIES.find((f) => f.id === depot!.id);
+      world.addWarehouse(opFacility || {
+        id: depot.id,
+        name: depot.name || 'Operational Facility',
+        position: depot.position,
+        capacity: 10000,
+        currentStock: 5000,
+        type: 'depot',
+        status: 'open',
+      });
+    }
+
+    const deliveryLocation = this.resolveDeliveryLocation(
+      world,
+      eOrder.delivery_address,
+      rawOrder.delivery_location || rawOrder.deliveryLocation
+    );
+
+    // Compute accurate demand weight from catalog
+    let totalWeight = 0;
+    for (const item of eOrder.items || []) {
+      const catItem = FALLBACK_CAMBODIA_CATALOG.find((c) => c.product_id === item.product_id);
+      const unitWeight = catItem?.weight_kg ?? (item.weight_kg ?? 2.0);
+      totalWeight += unitWeight * (item.quantity || 1);
+    }
+    if (totalWeight <= 0) totalWeight = 5.0;
 
     const order: Order = {
       id: eOrder.order_id,
