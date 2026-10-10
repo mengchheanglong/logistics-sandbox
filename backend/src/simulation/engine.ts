@@ -128,7 +128,7 @@ export class SimulationEngine {
     this.world = new World(scenario);
     this.dispatcher = new Dispatcher();
     this.vrpSolver = new VrpTourSolver();
-    this.routingClient = new RoutingClient(options.routingUrl ?? process.env.ROUTING_SERVICE_URL ?? 'http://localhost:3000');
+    this.routingClient = new RoutingClient(options.routingUrl ?? process.env.ROUTING_SERVICE_URL ?? 'http://localhost:8000');
 
     if (options.strictRouting) {
       this.strictRouting = true;
@@ -140,7 +140,7 @@ export class SimulationEngine {
 
     this.ecommerceClient = new EcommerceReadClient(options.ecommerceReadUrl ?? process.env.ECOMMERCE_READ_URL);
     const opUrl = options.operationalPlatformUrl ?? process.env.OPERATIONAL_PLATFORM_URL;
-    this.operationalPlatformClient = new OperationalPlatformReadClient(opUrl ?? 'http://127.0.0.1:3100');
+    this.operationalPlatformClient = new OperationalPlatformReadClient(opUrl ?? 'http://127.0.0.1:8100');
     this.operationalPlatformUrlConfigured = Boolean(opUrl);
     this.persistence = createPersistenceLayer();
     this.predictiveAiEngine = new PredictiveAiEngine();
@@ -206,7 +206,7 @@ export class SimulationEngine {
 
     this.ecommerceClient.checkHealth().then((ok) => {
       if (ok) {
-        console.log('[SimulationEngine] Upstream ecommerce-hive-nosql connected on port 4000 ✓');
+        console.log('[SimulationEngine] Upstream ecommerce-hive-nosql connected on port 8400 ✓');
         this.ecommerceClient.fetchCatalog().then((cat) => {
           if (cat && cat.length > 0) this.world.setCatalog(cat);
         });
@@ -248,7 +248,7 @@ export class SimulationEngine {
           }
         });
       } else {
-        console.log('[SimulationEngine] Upstream ecommerce-hive-nosql marketplace standby (not reachable on port 4000)');
+        console.log('[SimulationEngine] Upstream ecommerce-hive-nosql marketplace standby (not reachable on port 8400)');
       }
     });
 

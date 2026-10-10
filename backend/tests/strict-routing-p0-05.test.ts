@@ -48,7 +48,7 @@ describe('Milestone M1: P0-05 Strict Routing & Graph Provenance Gate', () => {
     });
 
     it('rejects demo graphs when requireRealGraph is specified', async () => {
-      const client = new RoutingClient('http://127.0.0.1:3000');
+      const client = new RoutingClient('http://127.0.0.1:8000');
       // Mock fetch returning a demo response
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
         ok: true,
@@ -75,7 +75,7 @@ describe('Milestone M1: P0-05 Strict Routing & Graph Provenance Gate', () => {
     });
 
     it('populates provenance metadata correctly on successful real route query', async () => {
-      const client = new RoutingClient('http://127.0.0.1:3000');
+      const client = new RoutingClient('http://127.0.0.1:8000');
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
         ok: true,
         json: async () => ({

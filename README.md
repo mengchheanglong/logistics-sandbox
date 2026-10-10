@@ -89,7 +89,7 @@ flowchart TD
 ### Prerequisites
 - [Node.js](https://nodejs.org/) 20 or higher
 - [pnpm](https://pnpm.io/) package manager
-- `osm-pathfinder` running locally on port 3000
+- `osm-pathfinder` running locally on port 8000
 
 ### Setup Instructions
 
@@ -121,7 +121,7 @@ flowchart TD
    ```
 
 6. **Open the Dashboard:**
-   Navigate to `http://localhost:5173` in your browser.
+   Navigate to `http://localhost:8501` in your browser.
 
 ## 📁 Project Structure
 

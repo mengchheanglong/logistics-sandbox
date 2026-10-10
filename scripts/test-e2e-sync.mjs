@@ -3,9 +3,9 @@
  * between logistics-sandbox and ecommerce-hive-nosql (both frontend and backend).
  */
 
-const ECOMMERCE_BACKEND = 'http://localhost:4000';
-const ECOMMERCE_WEB = 'http://localhost:3002';
-const SANDBOX_BACKEND = 'http://localhost:3001';
+const ECOMMERCE_BACKEND = process.env.ECOMMERCE_BACKEND || 'http://localhost:8400';
+const ECOMMERCE_WEB = process.env.ECOMMERCE_WEB || 'http://localhost:8401';
+const SANDBOX_BACKEND = process.env.SANDBOX_BACKEND || 'http://localhost:8500';
 
 async function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -14,7 +14,7 @@ async function wait(ms) {
 async function runTest() {
   console.log('================================================================');
   console.log('🚀 END-TO-END BIDIRECTIONAL SYNC TEST');
-  console.log('   Logistics Sandbox <---> ecommerce-hive-nosql (Frontend & Backend)');
+  console.log('   Logistics Sandbox <---> ecommerce-storefront (Frontend & Backend)');
   console.log('================================================================\n');
 
   // STEP 1: Verify all 3 services are online
@@ -26,9 +26,9 @@ async function runTest() {
       fetch(`${ECOMMERCE_WEB}`).then(r => r.status === 200),
     ]);
 
-    console.log(`✓ Ecommerce Backend (Port 4000): ${ecomHealth ? 'ONLINE' : 'OFFLINE'}`);
-    console.log(`✓ Logistics Sandbox (Port 3001): ${sandHealth ? 'ONLINE' : 'OFFLINE'}`);
-    console.log(`✓ Ecommerce Web Frontend (Port 3002): ${webRes ? 'ONLINE' : 'OFFLINE'}`);
+    console.log(`✓ Ecommerce Backend (Port 8400): ${ecomHealth ? 'ONLINE' : 'OFFLINE'}`);
+    console.log(`✓ Logistics Sandbox (Port 8500): ${sandHealth ? 'ONLINE' : 'OFFLINE'}`);
+    console.log(`✓ Ecommerce Web Frontend (Port 8401): ${webRes ? 'ONLINE' : 'OFFLINE'}`);
 
     if (!ecomHealth || !sandHealth) {
       throw new Error('Required services are not running');

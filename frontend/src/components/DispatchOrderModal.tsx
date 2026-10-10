@@ -345,7 +345,7 @@ export function DispatchOrderModal({
                 <span>•</span>
                 <span className="text-cyan-400 font-mono">Earliest Deadline First (EDF)</span>
                 <span>•</span>
-                <span className="text-purple-300 font-mono">MongoDB Port 4000 Mirroring</span>
+                <span className="text-purple-300 font-mono">MongoDB Port 8400 Mirroring</span>
               </div>
             </div>
           </div>
@@ -652,7 +652,7 @@ export function DispatchOrderModal({
 
                 <div>
                   <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                    Select Catalog Product (MongoDB on Port 4000)
+                    Select Catalog Product (MongoDB on Port 8400)
                   </label>
                   <select
                     value={selectedProductId}

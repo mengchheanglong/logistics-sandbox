@@ -95,7 +95,7 @@ describe('Dispatcher', () => {
   it('finds nearest vehicle and assigns order', async () => {
     const world = new World(defaultScenario);
     const dispatcher = new Dispatcher();
-    const routingClient = new RoutingClient('http://localhost:3000');
+    const routingClient = new RoutingClient('http://localhost:8000');
 
     const order = world.generateOrder(0);
     const vehicles = world.getAllVehicles();

@@ -73,7 +73,7 @@ describe('Simulation operational write boundary', () => {
             return Response.json(structuredClone(upstream.orders));
           return Response.json({ success: true });
         }
-        if (url.origin === 'http://localhost:3000') {
+        if (url.origin === 'http://localhost:8000' || url.origin === 'http://localhost:3000') {
           if (url.pathname === '/api/health')
             return Response.json({ status: 'ok' });
           const route = JSON.parse(String(init?.body));

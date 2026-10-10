@@ -27,7 +27,7 @@ app.use('/api', setupRoutes(simulationEngine));
 // Setup WebSocket server
 setupWebSocket(wss, simulationEngine);
 
-const PORT = process.env.PORT || 3007;
+const PORT = process.env.PORT || 8500;
 
 server.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);

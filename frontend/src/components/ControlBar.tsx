@@ -293,8 +293,8 @@ export function ControlBar({
                 ? 'bg-teal-950/60 border-teal-500/40 text-teal-300'
                 : 'bg-slate-900/60 border-slate-800 text-slate-400'
             }`}
-            title={`ecommerce-hive-nosql bridge: ${
-              ecommerceBridge.connected ? 'Connected on port 4000' : 'Standby'
+            title={`ecommerce-storefront bridge: ${
+              ecommerceBridge.connected ? 'Connected on port 8400' : 'Standby'
             }`}
           >
             <ShoppingCart className="w-3.5 h-3.5 text-teal-400" />

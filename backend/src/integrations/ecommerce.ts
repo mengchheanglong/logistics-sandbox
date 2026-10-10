@@ -126,7 +126,7 @@ export class EcommerceReadClient {
     FALLBACK_CAMBODIA_CATALOG,
   );
 
-  constructor(baseUrl: string = 'http://localhost:4000') {
+  constructor(baseUrl: string = process.env.ECOMMERCE_READ_URL ?? 'http://localhost:8400') {
     const url = new URL(baseUrl);
     if (
       !['http:', 'https:'].includes(url.protocol) ||

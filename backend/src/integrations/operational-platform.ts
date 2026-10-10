@@ -32,7 +32,7 @@ export class OperationalPlatformReadClient {
   // Cached facility coordinates mapped by UUID and by Code
   private facilityMap: Map<string, { code: string; name: string; lat: number; lon: number }> = new Map();
 
-  constructor(baseUrl: string = process.env.OPERATIONAL_PLATFORM_URL ?? 'http://127.0.0.1:3100') {
+  constructor(baseUrl: string = process.env.OPERATIONAL_PLATFORM_URL ?? 'http://127.0.0.1:8100') {
     const url = new URL(baseUrl);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
       throw new Error('Operational platform URL must be HTTP(S) without credentials, query or fragment');

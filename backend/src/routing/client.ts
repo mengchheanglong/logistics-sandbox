@@ -73,7 +73,7 @@ export class RoutingClient {
   private strictMode: boolean = false;
   private lastHealthCheck: number = 0;
 
-  constructor(baseUrl: string = process.env.ROUTING_SERVICE_URL ?? 'http://localhost:3000') {
+  constructor(baseUrl: string = process.env.ROUTING_SERVICE_URL ?? 'http://localhost:8000') {
     this.baseUrl = baseUrl;
   }
 

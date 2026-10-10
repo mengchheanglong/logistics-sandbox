@@ -131,7 +131,7 @@ describe('VrpTourSolver', () => {
     ];
 
     // Mock routing client
-    const routingClient = new RoutingClient('http://localhost:3000');
+    const routingClient = new RoutingClient('http://localhost:8000');
     vi.spyOn(routingClient, 'calculateRoute').mockImplementation(async (start, end) => ({
       path: [
         [start.lon, start.lat],

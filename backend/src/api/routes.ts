@@ -238,7 +238,7 @@ export function setupRoutes(engine: SimulationEngine): Router {
     if (!isUp) {
       res.status(503).json({
         status: 'unavailable',
-        message: 'ecommerce-hive-nosql is not responding on port 4000',
+        message: 'ecommerce-storefront is not responding on port 8400',
         bridge: engine.ecommerceClient.getStatus(),
       });
       return;
@@ -291,7 +291,7 @@ export function setupRoutes(engine: SimulationEngine): Router {
     if (!isAvailable) {
       res.status(503).json({
         status: 'unavailable',
-        message: 'supply-chain-platform is not responding on port 3100',
+        message: 'supply-chain-platform is not responding on port 8100',
         bridge: engine.operationalPlatformClient.getStatus(),
       });
       return;
@@ -318,7 +318,7 @@ export function setupRoutes(engine: SimulationEngine): Router {
     const analytics = await engine.ecommerceClient.fetchWarehouseAnalytics();
     if (!analytics) {
       res.status(503).json({
-        error: 'Warehouse analytics unavailable from ecommerce-hive-nosql on port 4000',
+        error: 'Warehouse analytics unavailable from ecommerce-storefront on port 8400',
       });
       return;
     }
