@@ -20,7 +20,7 @@ Order mirroring, upstream delivery updates, stock adjustment and GPS uploads are
 `PERSISTENCE_DRIVER` defaults to `in-memory`. Remote/unknown values reject startup;
 Mongo/Cassandra/Neo4j HTTP write adapters and credential defaults are removed.
 Do not provide operational secrets to the simulator. Set `ECOMMERCE_READ_URL` to the
-approved read source (default `http://localhost:4000`). Credential/query/fragment URLs
+approved read source (default `http://localhost:8400`). Credential/query/fragment URLs
 are rejected; HTTP(S) reads omit credentials and reject redirects.
 
 `POST /api/inventory/adjust` and `POST /api/graph/query` return 403. Injected orders
@@ -49,7 +49,7 @@ Local write failures emit telemetry.storage.failed. Determinism remains P0-04 wo
 - **🌐 Interactive Digital Twin:** 3D map visualization using MapLibre GL and deck.gl for fleet and facility tracking.
 - **⏱️ Deterministic Simulation Engine:** Configurable tick rates, clock speeds, and deterministic replay capabilities.
 - **🛣️ Real-World Routing:** Integrates seamlessly with `osm-pathfinder` for realistic road-network navigation.
-- **📈 Scalable Architecture:** Built to emulate high-throughput patterns from `ecommerce-hive-nosql`.
+- **📈 Scalable Architecture:** Built to emulate high-throughput patterns from `ecommerce-storefront`.
 - **🔄 Scenario Management:** Define and execute diverse logistical stress tests and edge cases.
 - **🔌 Event-Driven:** WebSocket integration for real-time telemetry and state synchronization.
 
@@ -148,7 +148,7 @@ logistics-sandbox/
 
 Logistics Sandbox relies heavily on realistic data and distributed system patterns.
 - **Routing:** It delegates pathfinding and ETA calculations to [osm-pathfinder](https://github.com/mengchheanglong/osm-pathfinder), ensuring accurate real-world navigation.
-- **Data Patterns:** It draws architectural inspiration from [ecommerce-hive-nosql](https://github.com/mengchheanglong/ecommerce-hive-nosql) to handle high-throughput logistics events.
+- **Data Patterns:** It draws architectural inspiration from [ecommerce-storefront](https://github.com/mengchheanglong/ecommerce-storefront) to handle high-throughput logistics events.
 
 ## ⚙️ Simulation Engine
 
@@ -179,4 +179,4 @@ This project is licensed under the [MIT License](LICENSE).
 ## 🌍 Related Projects
 
 - [osm-pathfinder](https://github.com/mengchheanglong/osm-pathfinder) - High-performance Rust routing engine for OpenStreetMap data.
-- [ecommerce-hive-nosql](https://github.com/mengchheanglong/ecommerce-hive-nosql) - Distributed NoSQL microservices architecture.
+- [ecommerce-storefront](https://github.com/mengchheanglong/ecommerce-storefront) - Omnichannel commercial storefront and demand bridge.
