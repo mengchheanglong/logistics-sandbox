@@ -45,16 +45,16 @@ import {
   PredictiveAiMetrics,
 } from '../world/types.js';
 import { computeCanonicalEventSequenceHash } from '../events/canonical-hash.js';
-import { DeliveryCorridorPreset, DELIVERY_CORRIDOR_PRESETS } from './corridors.js';
-import { IncidentManager, CreateIncidentOptions } from './incident-manager.js';
+import { type DeliveryCorridorPreset, DELIVERY_CORRIDOR_PRESETS } from './corridors.js';
+import { IncidentManager, type CreateIncidentOptions } from './incident-manager.js';
 import { OrderPipeline } from './order-pipeline.js';
 import { FleetAdvancer } from './fleet-advancer.js';
-import { RerouteCoordinator, RerouteOptions, RerouteResult } from './reroute-coordinator.js';
+import { RerouteCoordinator, type RerouteOptions, type RerouteResult } from './reroute-coordinator.js';
 import { DispatchCoordinator } from './dispatch-coordinator.js';
-import { EventInjector, CustomOrderOptions } from './event-injector.js';
-import { SimulationStateBuilder, BenchmarkMetricsRaw } from './state-builder.js';
+import { EventInjector, type CustomOrderOptions } from './event-injector.js';
+import { SimulationStateBuilder, type BenchmarkMetricsRaw } from './state-builder.js';
 
-export { DeliveryCorridorPreset, DELIVERY_CORRIDOR_PRESETS };
+export { type DeliveryCorridorPreset, DELIVERY_CORRIDOR_PRESETS };
 
 export class SimulationEngine {
   public clock: SimulationClock;
